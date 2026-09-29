@@ -212,4 +212,12 @@ TEST_CASE(external_atomic_transaction_observes_final_life_state_instead_of_inter
         ayt::stats::Mutation{resource,ayt::stats::MutationOp::Decrease,40}},state.version()).value();
     CHECK_TRUE(life.observe(lethal)->after == LifePhase::Dead && state.read(resource)->current == 0);
 }
+TEST_CASE(life_tracking_ignores_base_and_capacity_fields_of_the_mapped_stat) {
+    LifeTracker life({ayt::stats::statId("health")});
+    ayt::stats::Settlement metadata{1,2,{{ayt::stats::statId("health"),100,0,-100,0,ayt::stats::ChangeField::Base},
+        {ayt::stats::statId("health"),100,0,-100,0,ayt::stats::ChangeField::Capacity}}};
+    CHECK_FALSE(life.observe(metadata).has_value());CHECK_TRUE(life.phase()==LifePhase::Alive);
+    metadata.changes={{ayt::stats::statId("health"),100,0,-100,0,ayt::stats::ChangeField::Current}};
+    CHECK_TRUE(life.observe(metadata)->after==LifePhase::Dead);
+}
 TEST_SUITE_END

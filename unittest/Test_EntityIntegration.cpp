@@ -108,9 +108,9 @@ TEST_CASE(replica_and_stale_version_do_not_publish_outcomes_or_consume_hit) {
     r.expectedVersion = f.stats->version(); CHECK_TRUE(f.submit(r).has_value());
     CHECK_TRUE(f.stats->wireState.find("70") != std::string::npos);
 }
-TEST_CASE(life_binding_requires_explicit_rebind_after_stats_reset) {
+TEST_CASE(life_binding_automatically_renews_after_stats_reset) {
     Fixture f; CHECK_TRUE(f.stats->configure(Fixture::schema()).has_value());
-    CHECK_TRUE(bindCombatant(f.world,f.world.getEntityHandle(f.target->getId())).error().code == Error::Stale);
+    CHECK_TRUE(bindCombatant(f.world,f.world.getEntityHandle(f.target->getId())).has_value());
     CHECK_TRUE(f.combat->configureLife(*f.stats,{ayt::stats::statId("health"),LifePhase::Downed,true}).has_value());
     f.binding = bindCombatant(f.world,f.world.getEntityHandle(f.target->getId())).value();
     auto downed = f.submit(f.request(),100);

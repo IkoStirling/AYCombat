@@ -51,14 +51,17 @@ std::optional<LifeTransition> LifeTracker::observe(const ayt::stats::Settlement&
     bool found = false;
     ayt::stats::Value before = 0, after = 0;
     for (const auto& change : settlement.changes) {
-        if (change.target != _policy.resource) continue;
+        if (change.target != _policy.resource || change.field != ayt::stats::ChangeField::Current) continue;
         if (!found) before = change.before;
         found = true; after = change.after;
     }
+    return found ? observeCurrent(before,after) : std::nullopt;
+}
+std::optional<LifeTransition> LifeTracker::observeCurrent(ayt::stats::Value before, ayt::stats::Value after) noexcept {
     // Stats commits atomically: an intermediate zero inside one transaction is not death.
     auto next = _phase;
-    if (found && _phase == LifePhase::Alive && before > 0 && after == 0) next = _policy.depleted;
-    else if (found && _phase != LifePhase::Alive && _policy.healingRevives && before == 0 && after > 0) next = LifePhase::Alive;
+    if (_phase == LifePhase::Alive && before > 0 && after == 0) next = _policy.depleted;
+    else if (_phase != LifePhase::Alive && _policy.healingRevives && before == 0 && after > 0) next = LifePhase::Alive;
     if (next != _phase) {
         const LifeTransition transition{_phase, next, ++_sequence}; _phase = next; return transition;
     }

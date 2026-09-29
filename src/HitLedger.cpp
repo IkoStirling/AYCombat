@@ -3,6 +3,14 @@
 #include <limits>
 
 namespace ayt::combat {
+Result<std::uint64_t> HitLedger::nextAttackId(std::uint64_t domain) const {
+    if(!domain)return std::unexpected(Diagnostic{Error::Invalid,"invalid attack domain",{}});
+    for(const auto& entry:_domains)if(entry.id==domain) {
+        if(entry.highWater==UINT64_MAX)return std::unexpected(Diagnostic{Error::Limit,"attack identities exhausted",{}});
+        return entry.highWater+1;
+    }
+    return 1;
+}
 namespace {
 auto fail(Error code, const char* message) { return std::unexpected(Diagnostic{code, message, {}}); }
 }

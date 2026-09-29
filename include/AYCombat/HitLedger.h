@@ -39,6 +39,8 @@ public:
     bool release(Reservation reservation) noexcept;
     /// Pending work must be completed/released before close. Late closed requests reject.
     Result<void> close(AttackRef attack);
+    /// Owner's next one-shot identity, compatible with explicitly opened advanced attacks.
+    Result<std::uint64_t> nextAttackId(std::uint64_t domain) const;
     std::size_t activeAttacks() const noexcept { return _attacks.size(); }
     std::size_t retainedRequests() const noexcept;
 private:

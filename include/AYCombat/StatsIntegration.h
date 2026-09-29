@@ -34,6 +34,9 @@ public:
     explicit LifeTracker(LifePolicy policy, LifePhase initial = LifePhase::Alive) : _policy(policy), _phase(initial) {}
     const LifePolicy& policy() const noexcept { return _policy; }
     LifePhase phase() const noexcept { return _phase; }
+    std::uint64_t sequence() const noexcept { return _sequence; }
+    /// Integrations observe final authoritative current even when settlement fields omit clamps.
+    std::optional<LifeTransition> observeCurrent(ayt::stats::Value before, ayt::stats::Value after) noexcept;
     std::optional<LifeTransition> observe(const ayt::stats::Settlement& settlement) noexcept;
 private:
     LifePolicy _policy;
@@ -63,6 +66,8 @@ struct CombatOutcome {
     OutcomeKind kind = OutcomeKind::Rejected;
     RuleDecision rule;
     std::optional<LifeTransition> life;
+    /// Entity adapter captures this pool value at action completion, including rejected/blocked work.
+    ayt::stats::Value remaining=0;
 };
 struct CombatPreview { TargetDecision decision; ayt::stats::Value calculated = 0; RuleDecision rule; };
 
