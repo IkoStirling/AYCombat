@@ -5,7 +5,9 @@ namespace ayt::combat {
 namespace {
 auto fail(Error code, const char* message) { return std::unexpected(Diagnostic{code, message, {}}); }
 Diagnostic numericError(const ayt::stats::Diagnostic& error) {
-    const auto code = error.code == ayt::stats::Error::Stale ? Error::Stale : Error::NumericFailure;
+    const auto code = error.code == ayt::stats::Error::Stale ? Error::Stale :
+        (error.code == ayt::stats::Error::Reentrant ? Error::Reentrant :
+        (error.code == ayt::stats::Error::Limit ? Error::Limit : Error::NumericFailure));
     return {code, error.message, error.path};
 }
 Result<TargetDecision> validate(const SettlementRequest& request, const RelationTable& relations) {
@@ -29,29 +31,81 @@ struct ReservationGuard {
     bool completed = false;
     ~ReservationGuard() { if (!completed) ledger.release(reservation); }
 };
+class StatSetTarget final : public SettlementTarget {
+public:
+    explicit StatSetTarget(ayt::stats::StatSet& state) : _state(state) {}
+    Result<const ayt::stats::StatSet*> state() const override { return &_state; }
+    ayt::stats::Result<ayt::stats::Settlement> commit(std::span<const ayt::stats::Mutation> mutations, std::uint64_t version) override {
+        return _state.commit(mutations, version);
+    }
+private:
+    ayt::stats::StatSet& _state;
+};
+Result<RuleDecision> ruleDecision(const SettlementRequest& request, SettlementOptions options) {
+    if (!options.rules) return RuleDecision{};
+    return options.rules->evaluate({request.source, request.target, request.filter.operation, request.damageType, request.facts});
+}
+}
+
+std::optional<LifeTransition> LifeTracker::observe(const ayt::stats::Settlement& settlement) noexcept {
+    bool found = false;
+    ayt::stats::Value before = 0, after = 0;
+    for (const auto& change : settlement.changes) {
+        if (change.target != _policy.resource) continue;
+        if (!found) before = change.before;
+        found = true; after = change.after;
+    }
+    // Stats commits atomically: an intermediate zero inside one transaction is not death.
+    auto next = _phase;
+    if (found && _phase == LifePhase::Alive && before > 0 && after == 0) next = _policy.depleted;
+    else if (found && _phase != LifePhase::Alive && _policy.healingRevives && before == 0 && after > 0) next = LifePhase::Alive;
+    if (next != _phase) {
+        const LifeTransition transition{_phase, next, ++_sequence}; _phase = next; return transition;
+    }
+    return std::nullopt;
 }
 
 Result<CombatPreview> preview(const SettlementRequest& request, const RelationTable& relations,
-                             const ayt::stats::CalculationPlan& plan, std::span<const ayt::stats::Value> inputs) {
+                             const ayt::stats::CalculationPlan& plan, std::span<const ayt::stats::Value> inputs, SettlementOptions options) {
     auto decision = validate(request, relations);
     if (!decision) return std::unexpected(decision.error());
     if (!decision->allowed) return CombatPreview{*decision};
+    auto rule = ruleDecision(request, options);
+    if (!rule) return std::unexpected(rule.error());
+    if (rule->action != RuleAction::Pass) return CombatPreview{*decision, 0, *rule};
     auto value = evaluate(request, plan, inputs);
     if (!value) return std::unexpected(value.error());
-    return CombatPreview{*decision, *value};
+    return CombatPreview{*decision, *value, *rule};
 }
 
 Result<CombatOutcome> settle(const SettlementRequest& request, const RelationTable& relations,
                             HitLedger& ledger, ayt::stats::StatSet& targetState,
-                            const ayt::stats::CalculationPlan& plan, std::span<const ayt::stats::Value> inputs) {
+                            const ayt::stats::CalculationPlan& plan, std::span<const ayt::stats::Value> inputs, SettlementOptions options) {
+    StatSetTarget target(targetState);
+    return settle(request, relations, ledger, target, plan, inputs, options);
+}
+Result<CombatOutcome> settle(const SettlementRequest& request, const RelationTable& relations,
+                            HitLedger& ledger, SettlementTarget& target,
+                            const ayt::stats::CalculationPlan& plan, std::span<const ayt::stats::Value> inputs, SettlementOptions options) {
     auto decision = validate(request, relations);
     if (!decision) return std::unexpected(decision.error());
     CombatOutcome outcome{request.hit.attack, request.hit.request, request.hit.target, request.source,
                           request.filter.operation, OutcomeState::Rejected, *decision};
     if (!decision->allowed) return outcome;
+    auto rule = ruleDecision(request, options);
+    if (!rule) return std::unexpected(rule.error());
+    outcome.rule = *rule;
+    if (rule->action == RuleAction::Reject) return outcome;
+    if (options.life && (!options.life->policy().resource ||
+        (options.life->policy().depleted != LifePhase::Dead && options.life->policy().depleted != LifePhase::Downed)))
+        return fail(Error::Invalid, "invalid life resource/depletion policy");
     auto reservation = ledger.reserve(request.hit);
     if (!reservation) return std::unexpected(reservation.error());
     ReservationGuard guard{ledger, *reservation};
+    auto boundState = target.state();
+    if (!boundState) return std::unexpected(boundState.error());
+    if (!*boundState) return fail(Error::Missing, "target state is not configured");
+    const auto& targetState = **boundState;
     const auto resourceIndex = targetState.schema()->index(request.resource);
     if (!resourceIndex) return fail(Error::Missing, "target resource is not defined");
     const auto& definition = targetState.schema()->definitions()[*resourceIndex];
@@ -59,11 +113,18 @@ Result<CombatOutcome> settle(const SettlementRequest& request, const RelationTab
         return fail(Error::Invalid, "combat settlement requires a persistent resource pool");
     if (targetState.version() != request.expectedVersion)
         return fail(Error::Stale, "target numerical state changed");
+    if (rule->action == RuleAction::Block) {
+        if (!ledger.complete(*reservation)) std::terminate();
+        guard.completed = true;
+        outcome.state = OutcomeState::Applied; outcome.kind = OutcomeKind::Blocked;
+        outcome.settlement.beforeVersion = outcome.settlement.afterVersion = request.expectedVersion;
+        return outcome;
+    }
     auto value = evaluate(request, plan, inputs);
     if (!value) return std::unexpected(value.error());
     const auto op = request.filter.operation == Operation::Damage ? ayt::stats::MutationOp::Decrease : ayt::stats::MutationOp::Increase;
     const ayt::stats::Mutation mutation{request.resource, op, *value};
-    auto settlement = targetState.commit(std::span(&mutation, 1), request.expectedVersion);
+    auto settlement = target.commit(std::span(&mutation, 1), request.expectedVersion);
     if (!settlement) return std::unexpected(numericError(settlement.error()));
     // No callbacks/allocations after the numerical commit. The pending entry already exists.
     if (!ledger.complete(*reservation)) std::terminate(); // Violation of single-owner/pure-extension contract.
@@ -71,6 +132,9 @@ Result<CombatOutcome> settle(const SettlementRequest& request, const RelationTab
     outcome.state = OutcomeState::Applied;
     outcome.calculated = *value;
     outcome.settlement = std::move(*settlement);
+    outcome.kind = outcome.settlement.changes[0].actual == 0 ? OutcomeKind::Zero :
+        (request.filter.operation == Operation::Damage ? OutcomeKind::Damage : OutcomeKind::Heal);
+    if (options.life) outcome.life = options.life->observe(outcome.settlement);
     return outcome;
 }
 

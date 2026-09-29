@@ -146,4 +146,70 @@ TEST_CASE(environment_damage_keeps_effect_provenance_without_actor) {
     CHECK_TRUE(outcome.settlement.changes[0].actual == -15);
 }
 
+TEST_CASE(invulnerability_rejects_without_consuming_then_same_request_can_apply) {
+    auto state = stats(); auto book = ledger(); auto r = request(1,state); auto rules = standardRules().value();
+    const std::array<ayt::stats::Value,1> input{30}; r.facts.invulnerable = true;
+    auto denied = settle(r,relations(),book,state,plan(),input,{&rules}).value();
+    CHECK_TRUE(denied.kind == OutcomeKind::Rejected && denied.rule.reason == 1 && book.retainedRequests() == 0);
+    r.facts.invulnerable = false;
+    CHECK_TRUE(settle(r,relations(),book,state,plan(),input,{&rules})->kind == OutcomeKind::Damage);
+}
+TEST_CASE(block_confirms_hit_without_formula_or_resource_commit) {
+    auto state = stats(); auto book = ledger(); auto r = request(1,state); auto rules = standardRules().value();
+    r.facts.blocking = true; const auto version = state.version();
+    auto blocked = settle(r,relations(),book,state,plan(),{}, {&rules}).value();
+    CHECK_TRUE(blocked.kind == OutcomeKind::Blocked && blocked.rule.reason == 3 && blocked.settlement.changes.empty());
+    CHECK_TRUE(state.version() == version && state.read(r.resource)->current == 100);
+    CHECK_TRUE(settle(r,relations(),book,state,plan(),{}, {&rules}).error().code == Error::Duplicate);
+}
+TEST_CASE(life_uses_actual_depletion_once_and_explicit_revival_policy) {
+    auto state = stats(); auto book = ledger({HitScope::Segment}); const auto resource = ayt::stats::statId("health");
+    LifeTracker life({resource, LifePhase::Downed, true});
+    const std::array<ayt::stats::Value,1> lethal{200}, zero{0}, heal{20};
+    auto r = request(1,state);
+    auto death = settle(r,relations(),book,state,plan(),lethal,{nullptr,&life}).value();
+    CHECK_TRUE(death.kind == OutcomeKind::Damage && death.life->after == LifePhase::Downed && death.life->sequence == 1);
+    r = request(2,state); r.hit.segment = 1;
+    auto noDamage = settle(r,relations(),book,state,plan(),lethal,{nullptr,&life}).value();
+    CHECK_TRUE(noDamage.kind == OutcomeKind::Zero && !noDamage.life);
+    r = request(3,state); r.hit.segment = 2; r.filter.operation = Operation::Heal;
+    CHECK_TRUE(settle(r,relations(),book,state,plan(),heal,{nullptr,&life})->life->after == LifePhase::Alive);
+    CHECK_TRUE(life.phase() == LifePhase::Alive);
+    r = request(4,state); r.hit.segment = 3;
+    CHECK_TRUE(settle(r,relations(),book,state,plan(),zero,{nullptr,&life})->kind == OutcomeKind::Zero);
+    r = request(5,state); r.hit.segment = 4;
+    auto depletedAgain = settle(r,relations(),book,state,plan(),lethal,{nullptr,&life}).value();
+    CHECK_TRUE(depletedAgain.life->after == LifePhase::Downed && depletedAgain.life->sequence == 3);
+}
+TEST_CASE(failed_commit_does_not_change_life_or_hit_confirmation) {
+    struct RefusingTarget : SettlementTarget {
+        ayt::stats::StatSet data = stats(); int commits = 0;
+        Result<const ayt::stats::StatSet*> state() const override { return &data; }
+        ayt::stats::Result<ayt::stats::Settlement> commit(std::span<const ayt::stats::Mutation>,std::uint64_t) override {
+            ++commits; return std::unexpected(ayt::stats::Diagnostic{ayt::stats::Error::Stale,"owner rejected",{}});
+        }
+    } adapter;
+    auto book = ledger(); auto r = request(1,adapter.data); LifeTracker life({r.resource});
+    const std::array<ayt::stats::Value,1> lethal{200};
+    CHECK_TRUE(settle(r,relations(),book,adapter,plan(),lethal,{nullptr,&life}).error().code == Error::Stale);
+    CHECK_TRUE(adapter.commits == 1 && life.phase() == LifePhase::Alive && book.close({1,1}).has_value());
+}
+TEST_CASE(healing_does_not_implicitly_revive_with_default_policy) {
+    auto state = stats(); auto book = ledger({HitScope::Segment}); auto r = request(1,state);
+    LifeTracker life({r.resource}); const std::array<ayt::stats::Value,1> lethal{100}, healing{20};
+    CHECK_TRUE(settle(r,relations(),book,state,plan(),lethal,{nullptr,&life})->life->after == LifePhase::Dead);
+    r = request(2,state); r.hit.segment = 1; r.filter.operation = Operation::Heal;
+    CHECK_FALSE(settle(r,relations(),book,state,plan(),healing,{nullptr,&life})->life.has_value());
+    CHECK_TRUE(life.phase() == LifePhase::Dead && state.read(r.resource)->current == 20);
+}
+TEST_CASE(external_atomic_transaction_observes_final_life_state_instead_of_intermediate_zero) {
+    auto state = stats(); const auto resource = ayt::stats::statId("health"); LifeTracker life({resource});
+    auto mixed = state.commit(std::array{ayt::stats::Mutation{resource,ayt::stats::MutationOp::Decrease,100},
+        ayt::stats::Mutation{resource,ayt::stats::MutationOp::Increase,20}},state.version()).value();
+    CHECK_TRUE(state.read(resource)->current == 20 && !life.observe(mixed));
+    CHECK_TRUE(life.phase() == LifePhase::Alive);
+    auto lethal = state.commit(std::array{ayt::stats::Mutation{resource,ayt::stats::MutationOp::Increase,20},
+        ayt::stats::Mutation{resource,ayt::stats::MutationOp::Decrease,40}},state.version()).value();
+    CHECK_TRUE(life.observe(lethal)->after == LifePhase::Dead && state.read(resource)->current == 0);
+}
 TEST_SUITE_END

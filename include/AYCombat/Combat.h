@@ -10,7 +10,7 @@
 
 namespace ayt::combat {
 
-enum class Error { Invalid, Missing, Duplicate, Stale, Limit, Pending, AlreadyHit, Closed, NumericFailure };
+enum class Error { Invalid, Missing, Duplicate, Stale, Limit, Pending, AlreadyHit, Closed, NumericFailure, Reentrant };
 struct Diagnostic { Error code; std::string message; std::string path; };
 template<class T> using Result = std::expected<T, Diagnostic>;
 

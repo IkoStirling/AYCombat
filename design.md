@@ -6,7 +6,7 @@
 
 Core is C++23 and standard-library-only. It owns no Entity, World, Stats pool or game object. It provides owned provenance values, directional team relations, pure operation permission checks, stable selection of already-mapped collider candidates, and a single-owner hit ledger. The optional Stats target executes a real immutable CalculationPlan and commits one persistent pool in one caller-owned StatSet.
 
-Entity/physics mapping, automatic Host ticking, life phases, result events, rules for block/parry, cross-object reactions, save/load, large-scale benchmarks and Ability/Combo runtime remain unimplemented. Public scope is partial; plan-stage acceptance is recorded separately.
+Ordered rule predicates, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity optionally binds real World/Entity/Stats components with owned outcome delivery. Physics mapping, automatic attack/skill scheduling, parry/redirection strategies, cross-object reactions, runtime save/load, large-scale benchmarks and Ability/Combo runtime remain planned. Public scope is partial; plan-stage acceptance is recorded separately.
 
 ## Identity and ownership
 
@@ -32,15 +32,27 @@ Numerical failure releases allowance via a guard, including exceptions unwinding
 
 After a successful Stats commit there are no callbacks or new allocations: the valid pending lease completes and the owned settlement is moved into CombatOutcome. This assumes the single-owner and pure-extension contracts; ledger mutation by an extension/concurrent thread is prohibited. Breaking the post-commit completion invariant terminates rather than returning a retryable error after applying damage.
 
-CombatOutcome Applied means successful permission and numerical settlement, including zero damage; it is not a death or automatic damage event. Rejected preserves a denial with no reservation or pool change. Errors are distinct. Actual delta is signed using the Stats convention, not the requested/calculated amount. Outcome identity is `(attack.domain,attack.id,request)`.
+CombatOutcome Applied confirms a hit: successful numerical settlement, including zero, or a block without numerical mutation. OutcomeKind distinguishes Rejected/Blocked/Zero/Damage/Heal. Rejected preserves the base target denial or matching rule ID with no reservation/pool change. Errors are distinct. Actual delta is signed using the Stats convention, not the requested/calculated amount. Outcome identity is `(attack.domain,attack.id,request)`.
 
-preview only checks supplied views/relations and performs pure computation. It does not validate a live attack, resource availability or a future target version, and does not alter ledger/state. No automatic events or reentrant reaction queue exists in this adapter.
+preview checks supplied views/relations/rules and performs pure computation only for a passing request. It does not validate a live attack, resource availability or a future target version, and does not alter ledger/state/life. Base permission and the additional rule decision are separate fields.
+
+## Rules, life and result delivery
+
+RuleRegistry validates explicit nonzero unique IDs, orders Permission before Response, descending priority then ascending ID, and stops on the first matching predicate. Permission may Reject; Response may Reject or Block. Standard IDs 1/2/3 are damage invulnerability/type immunity/block, and never reject healing. Custom registries choose their own stable identities. Rules are immutable; predicates are pure and exceptions become pre-commit diagnostics. Friendly fire is the explicit TargetFilter mask. No numeric modifiers belong here; mitigation formulas remain Stats plans.
+
+LifeTracker owns a resource policy, current Alive/Downed/Dead phase and transition sequence. It compares the resource before and after the entire atomic Stats settlement; an intermediate zero followed by restoration within that transaction is not death. Actual positive-to-zero depletes Alive; additional zero changes do not repeat death. Healing zero-to-positive revives only when policy enables it. Initial phase is supplied explicitly; Entity configureLife reads the selected persistent pool and handles initial zero as depleted. External Stats writes do not automatically invoke Combat life tracking; the owner must observe their successful settlement or reconfigure/rebind policy. Combat owns no duplicate status/effect clock.
+
+SettlementTarget exposes const state inspection and the owner's controlled atomic commit. It must return Stats's one Change per mutation semantics; no const_cast or external pool mutation is used. EntityBinding combines StatsSystem World token, EntityHandle ID/version (version+1 in CombatantRef), Stats generation and Combat component generation. Resolve rejects removed/replaced/reconfigured components, stale handles, another World incarnation or replicas. Requests use current component team/capabilities/immunity/block facts, while source team/provenance stays the chosen retained snapshot. Retained source identities do not require a live source.
+
+CombatSystem submits synchronously on a single owner; its Sim hook does not schedule attacks. Submission reentry/rule replacement is rejected. It reserves one notification change slot before settle and retains at most 1024 owned outcomes, including ordinary rejections. Overflow rejects before mutation; successful duplicate errors produce no new outcome. takeOutcomes transfers results without callbacks; consumers run afterward. Stats NextTick commits reserve their separate bounded notification queue before mutation and deliver on the next Stats Sim update. Notification exceptions are post-commit diagnostics and cannot release completed hit allowance. Reconfiguration/checkpoint restore discard old Stats notifications. Combat outcomes remain owned values after Entity deletion; the World-owned system/outbox is destroyed on World teardown.
+
+Life/immuneTypes/attacks/outcomes are runtime state; serializable basic team/capability/invulnerability/block fields do not constitute a Combat checkpoint. Pausing/request production, externally written resources and consumers' own replay handling remain explicit owner responsibilities. General allocator failure and violation of pure-extension/owner contracts are outside the retryable transaction guarantee.
 
 ## Dependencies and deferred work
 
-AYCombat::Core has no Stats/Entity/Physics dependency. AYCombat::Stats links Core and AYStats::Core. Root opt-in requires the local checkouts; absent Stats must disable the adapter or fail configuration clearly. No remote/submodule URL is invented.
+AYCombat::Core has no Stats/Entity/Physics dependency. AYCombat::Stats links Core and AYStats::Core. Optional AYCombat::Entity links Stats adapter and AYStats::Entity; it is assembled after those targets in the root build. Standalone Entity configuration fails clearly. Root opt-in requires the local checkouts; absent Stats must disable the adapter or fail configuration clearly. No remote/submodule URL is invented.
 
-A single StatSet transaction is not a cross-object transaction. Multi-pool shield settlement, reflection/lifesteal, host bindings and batch completion must use validated Stats contracts in later stages. Life phase, geometry, animation and Combo decisions consume Combat results in higher or optional layers; Core does not know skill graphs.
+A single StatSet transaction is not a cross-object transaction. Multi-pool shield settlement, reflection/lifesteal and batch completion must use validated Stats contracts in later stages. Geometry, animation and Combo decisions consume Combat results in higher or optional layers; Core does not know skill graphs.
 
 ## Validation
 
