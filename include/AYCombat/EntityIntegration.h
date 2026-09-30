@@ -36,6 +36,15 @@ struct InteractionResult {
     std::optional<AttributeResult> attribute;
     std::uint64_t effectInstance=0;
 };
+/// Reusable authored contribution. Duration is measured on the Stats Sim clock;
+/// UINT64_MAX means permanent. Modifier identities are allocated by Combat.
+struct EffectDefinition {
+    std::uint64_t type=0,key=0,durationTicks=UINT64_MAX;
+    std::uint32_t maxStacks=UINT32_MAX;
+    std::vector<ayt::stats::Modifier> modifiers;
+    std::vector<std::uint64_t> tags,immuneEffects,immuneDamageTypes;
+    bool stunned=false;
+};
 /// Entity identity plus both component incarnations. A replacement invalidates queued work.
 struct EntityBinding {
     CombatantRef ref;
@@ -57,7 +66,7 @@ public:
     AY_PROPERTY(std::uint32_t, depletedPhase, ayt::entity::kAttrSerialize)
     AY_PROPERTY(bool, healingRevives, ayt::entity::kAttrSerialize)
     std::vector<std::uint64_t> immuneTypes;
-    /// Current base facts; N4 will add separately owned status contributions.
+    /// Base facts; owned effects contribute separately without modifying these vectors.
     std::vector<std::uint64_t> tags,immuneEffects;
     std::uint64_t generation() const noexcept { return _generation; }
     /// Configure the life mapping once. Internal publication automatically renews Stats incarnations.
@@ -120,9 +129,26 @@ public:
     Result<InteractionResult> interactAttribute(ayt::entity::EntityHandle source,ayt::entity::EntityHandle target,
         std::string_view stat,ayt::stats::AttributeOp operation,ayt::stats::Value amount,
         InteractionPolicy policy,bool selected=false,std::string_view recipe={});
-    /// Apply one Stats numerical effect after permission; instance ownership beyond Stats is N4.
+    /// Low-level Stats numerical effect after permission; the caller owns its Stats ID/lifecycle.
     Result<InteractionResult> applyEffect(ayt::entity::EntityHandle source,ayt::entity::EntityHandle target,
         ayt::stats::Effect effect,ayt::stats::EffectPolicy stackPolicy,InteractionPolicy policy,bool selected=false);
+    /// Apply one Combat-owned instance. Repeated calls make independent instances up to maxStacks.
+    /// Denial creates nothing; successful numerical and status contributions share a completion point.
+    Result<InteractionResult> applyOwnedEffect(ayt::entity::EntityHandle source,ayt::entity::EntityHandle target,
+        EffectDefinition definition,InteractionPolicy policy,bool selected=false);
+    /// Renew only the lifetime, or atomically replace one instance's owned contributions.
+    Result<void> refreshOwnedEffect(std::uint64_t instance,std::uint64_t durationTicks);
+    Result<void> replaceOwnedEffect(std::uint64_t instance,EffectDefinition definition);
+    /// Removal requires a registered instance; unknown IDs return Missing.
+    Result<void> removeOwnedEffect(std::uint64_t instance);
+    /// Source cancellation removes each live contribution; targets settle independently.
+    Result<std::size_t> removeSourceEffects(ayt::entity::EntityHandle source);
+    /// Effective facts combine base facts and each live owned contribution.
+    Result<bool> hasTag(ayt::entity::EntityHandle target,std::uint64_t tag) const;
+    Result<bool> immuneToEffect(ayt::entity::EntityHandle target,std::uint64_t type) const;
+    Result<bool> immuneToDamageType(ayt::entity::EntityHandle target,std::uint64_t type) const;
+    Result<bool> stunned(ayt::entity::EntityHandle target) const;
+    std::size_t ownedEffectCount() const noexcept {return _owned.size();}
     Result<AttributeResult> increase(ayt::entity::EntityHandle target,std::string_view stat,ayt::stats::Value amount,std::string_view recipe={}) {
         return changeAttribute(target,stat,ayt::stats::AttributeOp::Increase,amount,recipe);
     }
@@ -152,6 +178,15 @@ private:
     RuleRegistry _rules;
     std::vector<CombatOutcome> _outcomes;
     static constexpr std::size_t OutcomeLimit = 1024;
+    struct OwnedEffect {
+        std::uint64_t id=0,expires=UINT64_MAX;
+        EntityBinding source,target;
+        SourceContext provenance;
+        EffectDefinition definition;
+    };
+    static constexpr std::size_t OwnedEffectLimit = 65536;
+    std::vector<OwnedEffect> _owned;
+    std::uint64_t _nextOwnedId=std::uint64_t{1}<<63,_nextModifierHandle=std::uint64_t{1}<<63;
     std::vector<LifeEvent> _lifeEvents;
     std::shared_ptr<StatsPublicationBridge> _publication;
     struct ActorRecord { ayt::entity::EntityHandle handle; LifePolicy life; std::uint64_t team; std::uint32_t capabilities; };
@@ -162,6 +197,13 @@ private:
     Result<ActionResult> act(Operation,ayt::entity::EntityHandle,ayt::entity::EntityHandle,ayt::stats::Value,std::string_view);
     Result<InteractionResult> authorizeInteraction(ayt::entity::EntityHandle,ayt::entity::EntityHandle,
         InteractionPolicy,bool);
+    bool liveOwned(const OwnedEffect&) const;
+    bool hasOwnedTag(const EntityBinding&,std::uint64_t) const;
+    bool hasOwnedImmunity(const EntityBinding&,std::uint64_t) const;
+    bool hasOwnedDamageImmunity(const EntityBinding&,std::uint64_t) const;
+    bool hasOwnedStun(const EntityBinding&) const;
+    Result<void> removeOwnedAt(std::size_t);
+    void pruneOwnedEffects();
     void initializeComponent(ayt::entity::EntityHandle,CombatComponent&);
     friend class CombatComponent;
     friend class StatsPublicationBridge;

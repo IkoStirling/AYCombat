@@ -3,6 +3,7 @@
 #include <AYEntity/ComponentRegistration.h>
 #include <AYEntity/EntityRuntimeModule.h>
 #include <atomic>
+#include <algorithm>
 #include <limits>
 
 namespace ayt::combat {
@@ -22,6 +23,20 @@ Diagnostic numericDiagnostic(const ayt::stats::Diagnostic& error) {
     default:break;
     }
     return {code,error.message,error.path};
+}
+bool validDefinition(const EffectDefinition& definition) {
+    if(!definition.type || !definition.key || !definition.durationTicks || !definition.maxStacks ||
+       (definition.modifiers.empty() && definition.tags.empty() && definition.immuneEffects.empty() &&
+        definition.immuneDamageTypes.empty() && !definition.stunned))return false;
+    return std::none_of(definition.tags.begin(),definition.tags.end(),[](auto id){return !id;}) &&
+        std::none_of(definition.immuneEffects.begin(),definition.immuneEffects.end(),[](auto id){return !id;}) &&
+        std::none_of(definition.immuneDamageTypes.begin(),definition.immuneDamageTypes.end(),[](auto id){return !id;});
+}
+Result<std::uint64_t> expiresAt(std::uint64_t tick,std::uint64_t duration) {
+    if(!duration)return fail(Error::Invalid,"effect duration must be positive");
+    if(duration==UINT64_MAX)return UINT64_MAX;
+    if(tick>=UINT64_MAX-duration)return fail(Error::Limit,"effect lifetime overflows Stats tick");
+    return tick+duration;
 }
 ActionResult gameplayResult(const CombatOutcome& outcome) noexcept {
     ActionResult result{outcome.kind,outcome.calculated,0,outcome.remaining,0,outcome.attack.id,outcome.decision,outcome.rule,outcome.life};
@@ -172,6 +187,9 @@ Result<CombatOutcome> CombatSystem::submit(EntityBinding binding, SettlementRequ
     // The request's target/facts are overwritten with the current authoritative component values.
     request.target = {binding.ref, current->combat->team, current->combat->capabilities, true};
     request.facts = {current->combat->invulnerable, current->combat->blocking, current->combat->immuneTypes};
+    for(const auto& owned:_owned)if(owned.target.ref==binding.ref &&
+        owned.target.statsGeneration==binding.statsGeneration && owned.target.combatGeneration==binding.combatGeneration && liveOwned(owned))
+        request.facts.immuneTypes.insert(request.facts.immuneTypes.end(),owned.definition.immuneDamageTypes.begin(),owned.definition.immuneDamageTypes.end());
     _settling = true;
     struct Guard { bool& busy; ~Guard() { busy = false; } } guard{_settling};
     EntityTarget target(*_world, binding);
@@ -199,6 +217,7 @@ std::vector<LifeEvent> CombatSystem::takeLifeEvents() {
 void CombatSystem::onUpdate(float) {
     if(!_world || _settling || _delivering)return;
     std::erase_if(_actors,[&](const auto& record){return !_world->getEntityByHandle(record.handle);});
+    pruneOwnedEffects();
     if(!_automatic)return;
     _delivering=true;struct Guard{bool& flag;~Guard(){flag=false;}} guard{_delivering};
     auto outcomeCallback=_onOutcome;auto lifeCallback=_onLife;
@@ -304,11 +323,19 @@ Result<InteractionResult> CombatSystem::authorizeInteraction(ayt::entity::Entity
     auto target=bindCombatant(*_world,targetHandle);if(!target)return std::unexpected(target.error());
     auto actor=resolve(*_world,*source);if(!actor)return std::unexpected(actor.error());
     auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
+    if(hasOwnedStun(*source))return fail(Error::Invalid,"source is stunned");
     SourceContext provenance;
     provenance.instigator=source->ref;provenance.directSource=source->ref;
     provenance.team=actor->combat->team;provenance.attribution=source->ref.object;
     CombatantView view{target->ref,current->combat->team,current->combat->capabilities,true};
-    InteractionFacts facts{selected,current->combat->tags,current->combat->immuneEffects};
+    std::vector<std::uint64_t> tags=current->combat->tags,immunities=current->combat->immuneEffects;
+    for(const auto& owned:_owned)if(owned.target.ref==target->ref &&
+        owned.target.statsGeneration==target->statsGeneration &&
+        owned.target.combatGeneration==target->combatGeneration && liveOwned(owned)) {
+        tags.insert(tags.end(),owned.definition.tags.begin(),owned.definition.tags.end());
+        immunities.insert(immunities.end(),owned.definition.immuneEffects.begin(),owned.definition.immuneEffects.end());
+    }
+    InteractionFacts facts{selected,tags,immunities};
     auto decision=checkInteraction(provenance,view,_relations,policy,facts);
     if(!decision)return std::unexpected(decision.error());
     return InteractionResult{*decision,provenance,target->ref};
@@ -343,6 +370,174 @@ Result<InteractionResult> CombatSystem::applyEffect(ayt::entity::EntityHandle so
     interaction->effectInstance=instance;
     return interaction;
 }
+bool CombatSystem::liveOwned(const OwnedEffect& owned) const {
+    if(!_world || !_stats || owned.expires<=_stats->tick())return false;
+    if(!resolve(*_world,owned.target))return false;
+    if(owned.definition.modifiers.empty())return true;
+    auto target=resolve(*_world,owned.target);
+    const auto modifiers=target->stats->state()->modifiers();
+    return std::any_of(modifiers.begin(),modifiers.end(),[&](const auto& modifier){return modifier.effect==owned.id;});
+}
+bool CombatSystem::hasOwnedTag(const EntityBinding& target,std::uint64_t tag) const {
+    return std::any_of(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.target.ref==target.ref &&
+        owned.target.statsGeneration==target.statsGeneration && owned.target.combatGeneration==target.combatGeneration &&
+        liveOwned(owned) && std::find(owned.definition.tags.begin(),owned.definition.tags.end(),tag)!=owned.definition.tags.end();});
+}
+bool CombatSystem::hasOwnedImmunity(const EntityBinding& target,std::uint64_t type) const {
+    return std::any_of(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.target.ref==target.ref &&
+        owned.target.statsGeneration==target.statsGeneration && owned.target.combatGeneration==target.combatGeneration &&
+        liveOwned(owned) && std::find(owned.definition.immuneEffects.begin(),owned.definition.immuneEffects.end(),type)!=owned.definition.immuneEffects.end();});
+}
+bool CombatSystem::hasOwnedDamageImmunity(const EntityBinding& target,std::uint64_t type) const {
+    return std::any_of(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.target.ref==target.ref &&
+        owned.target.statsGeneration==target.statsGeneration && owned.target.combatGeneration==target.combatGeneration &&
+        liveOwned(owned) && std::find(owned.definition.immuneDamageTypes.begin(),owned.definition.immuneDamageTypes.end(),type)!=owned.definition.immuneDamageTypes.end();});
+}
+bool CombatSystem::hasOwnedStun(const EntityBinding& target) const {
+    return std::any_of(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.target.ref==target.ref &&
+        owned.target.statsGeneration==target.statsGeneration && owned.target.combatGeneration==target.combatGeneration &&
+        owned.definition.stunned && liveOwned(owned);});
+}
+Result<bool> CombatSystem::hasTag(ayt::entity::EntityHandle handle,std::uint64_t tag) const {
+    if(!tag || !_world)return fail(Error::Invalid,"invalid tag or unbound Combat World");
+    auto target=bindCombatant(*_world,handle);if(!target)return std::unexpected(target.error());
+    auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
+    return std::find(current->combat->tags.begin(),current->combat->tags.end(),tag)!=current->combat->tags.end() || hasOwnedTag(*target,tag);
+}
+Result<bool> CombatSystem::immuneToEffect(ayt::entity::EntityHandle handle,std::uint64_t type) const {
+    if(!type || !_world)return fail(Error::Invalid,"invalid effect type or unbound Combat World");
+    auto target=bindCombatant(*_world,handle);if(!target)return std::unexpected(target.error());
+    auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
+    return std::find(current->combat->immuneEffects.begin(),current->combat->immuneEffects.end(),type)!=current->combat->immuneEffects.end() || hasOwnedImmunity(*target,type);
+}
+Result<bool> CombatSystem::immuneToDamageType(ayt::entity::EntityHandle handle,std::uint64_t type) const {
+    if(!type || !_world)return fail(Error::Invalid,"invalid damage type or unbound Combat World");
+    auto target=bindCombatant(*_world,handle);if(!target)return std::unexpected(target.error());
+    auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
+    return std::find(current->combat->immuneTypes.begin(),current->combat->immuneTypes.end(),type)!=current->combat->immuneTypes.end() || hasOwnedDamageImmunity(*target,type);
+}
+Result<bool> CombatSystem::stunned(ayt::entity::EntityHandle handle) const {
+    if(!_world)return fail(Error::Missing,"combat is not installed");
+    auto target=bindCombatant(*_world,handle);if(!target)return std::unexpected(target.error());
+    return hasOwnedStun(*target);
+}
+Result<InteractionResult> CombatSystem::applyOwnedEffect(ayt::entity::EntityHandle source,
+    ayt::entity::EntityHandle target,EffectDefinition definition,InteractionPolicy policy,bool selected) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"owned effect during settlement/delivery");
+    if(!validDefinition(definition))return fail(Error::Invalid,"invalid owned effect definition");
+    if(_owned.size()>=OwnedEffectLimit || _nextOwnedId==UINT64_MAX)return fail(Error::Limit,"owned effect identity/capacity exhausted");
+    if(_nextModifierHandle>UINT64_MAX-definition.modifiers.size())return fail(Error::Limit,"modifier identity exhausted");
+    auto expiry=expiresAt(_stats?_stats->tick():0,definition.durationTicks);if(!expiry)return std::unexpected(expiry.error());
+    policy.effectType=definition.type;
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    auto interaction=authorizeInteraction(source,target,policy,selected);
+    if(!interaction || !interaction->decision.allowed)return interaction;
+    auto sourceBinding=bindCombatant(*_world,source);if(!sourceBinding)return std::unexpected(sourceBinding.error());
+    auto targetBinding=bindCombatant(*_world,target);if(!targetBinding)return std::unexpected(targetBinding.error());
+    if(std::any_of(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.target.ref==targetBinding->ref &&
+        owned.definition.key==definition.key && owned.definition.maxStacks!=definition.maxStacks && liveOwned(owned);}))
+        return fail(Error::Invalid,"owned effect stack policy differs from active group");
+    const auto stacks=std::count_if(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.target.ref==targetBinding->ref &&
+        owned.definition.key==definition.key && liveOwned(owned);});
+    if(std::size_t(stacks)>=definition.maxStacks)return fail(Error::Limit,"owned effect stack limit");
+    const auto id=_nextOwnedId+1;
+    for(auto& modifier:definition.modifiers)modifier.handle=++_nextModifierHandle;
+    OwnedEffect owned{id,*expiry,*sourceBinding,*targetBinding,interaction->source,std::move(definition)};
+    owned.provenance.effect=id;
+    _owned.reserve(_owned.size()+1); // Any allocation happens before the Stats publication.
+    if(!owned.definition.modifiers.empty()) {
+        auto current=resolve(*_world,*targetBinding);if(!current)return std::unexpected(current.error());
+        ayt::stats::Effect numerical{id,owned.definition.key,*expiry,owned.definition.maxStacks,owned.definition.modifiers};
+        auto applied=current->stats->applyEffect(std::move(numerical),ayt::stats::EffectPolicy::Independent,_stats->tick());
+        if(!applied)return std::unexpected(numericDiagnostic(applied.error()));
+    }
+    _nextOwnedId=id;
+    interaction->effectInstance=id;interaction->source.effect=id;
+    _owned.push_back(std::move(owned));
+    return interaction;
+}
+Result<void> CombatSystem::refreshOwnedEffect(std::uint64_t instance,std::uint64_t durationTicks) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"effect refresh during settlement/delivery");
+    auto it=std::find_if(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.id==instance;});
+    if(it==_owned.end())return fail(Error::Missing,"owned effect instance missing");
+    if(!liveOwned(*it))return fail(Error::Stale,"owned effect is no longer live");
+    if(!resolve(*_world,it->source))return fail(Error::Stale,"owned effect source changed");
+    auto expiry=expiresAt(_stats->tick(),durationTicks);if(!expiry)return std::unexpected(expiry.error());
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    if(!it->definition.modifiers.empty()) {
+        auto current=resolve(*_world,it->target);if(!current)return std::unexpected(current.error());
+        ayt::stats::Effect numerical{it->id,it->definition.key,*expiry,it->definition.maxStacks,it->definition.modifiers};
+        auto updated=current->stats->updateEffect(std::move(numerical),_stats->tick());
+        if(!updated)return std::unexpected(numericDiagnostic(updated.error()));
+    }
+    it->expires=*expiry;it->definition.durationTicks=durationTicks;return {};
+}
+Result<void> CombatSystem::replaceOwnedEffect(std::uint64_t instance,EffectDefinition definition) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"effect replacement during settlement/delivery");
+    auto it=std::find_if(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.id==instance;});
+    if(it==_owned.end())return fail(Error::Missing,"owned effect instance missing");
+    if(!liveOwned(*it))return fail(Error::Stale,"owned effect is no longer live");
+    if(!resolve(*_world,it->source))return fail(Error::Stale,"owned effect source changed");
+    if(!validDefinition(definition) || definition.key!=it->definition.key || definition.type!=it->definition.type ||
+        definition.maxStacks!=it->definition.maxStacks)return fail(Error::Invalid,"replacement changed effect group identity");
+    if(_nextModifierHandle>UINT64_MAX-definition.modifiers.size())return fail(Error::Limit,"modifier identity exhausted");
+    auto expiry=expiresAt(_stats->tick(),definition.durationTicks);if(!expiry)return std::unexpected(expiry.error());
+    for(auto& modifier:definition.modifiers)modifier.handle=++_nextModifierHandle;
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    auto current=resolve(*_world,it->target);if(!current)return std::unexpected(current.error());
+    const bool before=!it->definition.modifiers.empty(),after=!definition.modifiers.empty();
+    ayt::stats::Result<void> changed;
+    if(after) {
+        ayt::stats::Effect numerical{it->id,definition.key,*expiry,definition.maxStacks,definition.modifiers};
+        changed=before?current->stats->updateEffect(std::move(numerical),_stats->tick()):
+            current->stats->applyEffect(std::move(numerical),ayt::stats::EffectPolicy::Independent,_stats->tick());
+    } else if(before)changed=current->stats->removeEffect(it->id);
+    if(!changed)return std::unexpected(numericDiagnostic(changed.error()));
+    it->expires=*expiry;it->definition=std::move(definition);return {};
+}
+Result<void> CombatSystem::removeOwnedAt(std::size_t index) {
+    auto& owned=_owned[index];
+    if(!owned.definition.modifiers.empty() && _world) {
+        const auto& ref=owned.target.ref;
+        auto* entity=ref.object<=UINT32_MAX && ref.generation>0 && ref.generation-1<=UINT32_MAX?
+            _world->getEntityByHandle({std::uint32_t(ref.object),std::uint32_t(ref.generation-1)}):nullptr;
+        auto* stats=entity?entity->getComponent<ayt::stats::StatsComponent>():nullptr;
+        if(stats && stats->generation()==owned.target.statsGeneration && stats->authority() && stats->state()) {
+            const auto modifiers=stats->state()->modifiers();
+            if(std::any_of(modifiers.begin(),modifiers.end(),[&](const auto& modifier){return modifier.effect==owned.id;})) {
+                auto removed=stats->removeEffect(owned.id);
+                if(!removed)return std::unexpected(numericDiagnostic(removed.error()));
+            }
+        }
+    }
+    _owned.erase(_owned.begin()+index);return {};
+}
+Result<void> CombatSystem::removeOwnedEffect(std::uint64_t instance) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"effect removal during settlement/delivery");
+    auto it=std::find_if(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.id==instance;});
+    if(it==_owned.end())return fail(Error::Missing,"owned effect instance missing");
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    return removeOwnedAt(std::size_t(it-_owned.begin()));
+}
+Result<std::size_t> CombatSystem::removeSourceEffects(ayt::entity::EntityHandle source) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"source effect removal during settlement/delivery");
+    if(!_world || !_stats)return fail(Error::Missing,"combat is not installed");
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    std::size_t count=0;
+    for(std::size_t i=0;i<_owned.size();) {
+        const auto& ref=_owned[i].source.ref;
+        if(ref.domain!=_token || ref.object!=source.id || ref.generation!=std::uint64_t(source.version)+1){++i;continue;}
+        auto removed=removeOwnedAt(i);if(!removed)return std::unexpected(removed.error());++count;
+    }
+    return count;
+}
+void CombatSystem::pruneOwnedEffects() {
+    for(std::size_t i=0;i<_owned.size();) {
+        if(liveOwned(_owned[i]) && resolve(*_world,_owned[i].source)){++i;continue;}
+        auto removed=removeOwnedAt(i);
+        if(!removed){_error=removed.error();++i;}
+    }
+}
 Result<ActionResult> CombatSystem::act(Operation operation,ayt::entity::EntityHandle sourceHandle,ayt::entity::EntityHandle targetHandle,
     ayt::stats::Value amount,std::string_view recipe) {
     if(_settling || _delivering)return fail(Error::Reentrant,"combat action during settlement/delivery");
@@ -351,6 +546,7 @@ Result<ActionResult> CombatSystem::act(Operation operation,ayt::entity::EntityHa
     auto source=bindCombatant(*_world,sourceHandle);if(!source)return std::unexpected(source.error());
     auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
     auto actor=resolve(*_world,*source);if(!actor)return std::unexpected(actor.error());
+    if(hasOwnedStun(*source))return fail(Error::Invalid,"source is stunned");
     if(!current->combat->life())return fail(Error::Missing,"target life resource is not configured");
     const auto resource=current->combat->life()->policy().resource;
     const auto op=operation==Operation::Damage?ayt::stats::AttributeOp::Decrease:ayt::stats::AttributeOp::Increase;

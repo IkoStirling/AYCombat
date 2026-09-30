@@ -6,7 +6,7 @@
 
 Core is C++23 and standard-library-only. It owns no Entity, World, Stats pool or game object. It provides owned provenance values, directional team relations, pure operation permission checks, stable selection of already-mapped collider candidates, and a single-owner hit ledger. The optional Stats target executes a real immutable CalculationPlan and commits one persistent pool in one caller-owned StatSet.
 
-Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Combat-owned effect instances/contributions, area membership, physics, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
+Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission, N4 owned effect contributions and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Area membership, physics, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
 
 ## Identity and ownership
 
@@ -108,12 +108,12 @@ Authored life mapping serializes the attribute name instead of a floating-point
 representation of its 64-bit ID. Other authored life fields serialize, while recipe books,
 actor profile registries and runtime phase/sequence are not checkpoints.
 
-## Generic changes, N3 permission and planned area effects
+## Generic changes, N3 permission, N4 ownership and planned area effects
 
 The post-implementation discussion is consolidated in engine plan section 16.
-N0–N3 have delivered numerical contracts, internal publication, simple numerical
-entries and a single-target interaction gate. Combat-owned effect instances and
-area membership remain planned.
+N0–N4 have delivered numerical contracts, internal publication, simple numerical
+entries, a single-target interaction gate and Combat-owned effect instances.
+Area membership remains planned.
 
 - Damage/heal resolve the profile's life pool. Generic operations select another
   stat and Increase/Decrease/Set intent. Persistent pools normally mutate current;
@@ -147,13 +147,24 @@ area membership remain planned.
   entry. The successful result retains a source snapshot. It does not create a hit,
   damage outcome or Combat-owned effect instance. Stats effect removal/update and
   automatic life publication remain available independently. Current facts are
-  base component vectors and request selection; dynamic contributions and area
-  rechecks belong to N4/N5.
+  base component vectors, live N4 contributions and request selection; area
+  rechecks belong to N5.
 - A reusable effect definition produces independent application instances. Each
   instance owns numerical modifier handles and any nonnumerical status/tag
-  contributions. Removal releases only those contributions; overlapping stun or
-  immunity must not be cleared with a global boolean reset. Refresh/replace/stack,
-  input snapshot/recalculation and feedback rejection are explicit contracts.
+  contributions. N4 stores source/target component incarnations and a monotonic
+  instance ID in the World-owned CombatSystem. Stats owns numerical modifiers;
+  Combat allocates their handles and owns base-independent tag, effect immunity,
+  damage-type immunity and stun contributions. Removal releases only one instance;
+  overlapping stun or immunity is recomputed from still-live instances, not reset
+  through a global boolean. Same-key instances stack independently to maxStacks;
+  refresh renews lifetime; replace keeps type/key/stack identity while atomically
+  changing that instance's numeric and status contributions. The lower-level N3
+  applyEffect is caller-owned by Stats ID. Input snapshot/recalculation and feedback
+  rejection for future dynamic authored effects remain explicit N5/Ability work.
+  N4 uses Stats tick and removes expired/source-ended/invalidated instances on fixed
+  Sim. Numeric expiry is processed by Stats first. Status-only effects have no Stats
+  mutation. Source cleanup can be requested explicitly; each target settles
+  independently and errors do not claim cross-object atomicity.
 - An area action maintains stable per-target membership on the existing fixed Sim
   boundary. By default a target must remain in range, permitted and selected;
   loss of eligibility removes the instance's contribution. Retained members are

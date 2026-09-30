@@ -78,6 +78,22 @@ TEST_CASE(current_authoritative_facts_override_a_forged_request_view) {
     CHECK_TRUE(f.stats->version() == version);
     CHECK_TRUE(f.submit(r).error().code == Error::Duplicate);
 }
+TEST_CASE(owned_damage_immunity_contributes_to_advanced_rules_without_erasing_base_facts) {
+    Fixture f;
+    auto sourceHandle=ayt::entity::EntityHandle{std::uint32_t(f.source.instigator->object),std::uint32_t(f.source.instigator->generation-1)};
+    auto targetHandle=f.world.getEntityHandle(f.target->getId());
+    CHECK_TRUE(f.system().configureActor(sourceHandle,{Fixture::schema(),{ayt::stats::statId("health")},10}).has_value());
+    EffectDefinition immunity;immunity.type=55;immunity.key=55;immunity.immuneDamageTypes={8};
+    InteractionPolicy policy{InteractionIntent::Harmful,mask(AllowedTarget::Hostile)};
+    auto owned=f.system().applyOwnedEffect(sourceHandle,targetHandle,immunity,policy).value();
+    CHECK_TRUE(owned.effectInstance && f.system().immuneToDamageType(targetHandle,8).value());
+    auto request=f.request();request.damageType=8;
+    CHECK_TRUE(f.submit(request)->rule.reason==2 && f.stats->read(request.resource)->current==100);
+    f.combat->immuneTypes={9};
+    CHECK_TRUE(f.system().removeOwnedEffect(owned.effectInstance).has_value());
+    CHECK_TRUE(!f.system().immuneToDamageType(targetHandle,8).value() && f.system().immuneToDamageType(targetHandle,9).value());
+    CHECK_TRUE(f.submit(f.request(2))->kind==OutcomeKind::Damage);
+}
 TEST_CASE(deleted_entity_rejects_late_work_and_retained_outcome_owns_source) {
     Fixture f; auto r = f.request();
     auto* attacker = f.world.getEntityByHandle({std::uint32_t(f.source.instigator->object),std::uint32_t(f.source.instigator->generation-1)});

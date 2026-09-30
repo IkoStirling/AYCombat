@@ -31,8 +31,13 @@ int main() {
         auto cost=require(combat.decrease(attacker,"mana",10));
         InteractionPolicy hostileDrain{InteractionIntent::Harmful,mask(AllowedTarget::Hostile)};
         auto drained=require(combat.interactAttribute(attacker,target,"mana",ayt::stats::AttributeOp::Decrease,5,hostileDrain));
+        EffectDefinition mark;mark.type=7;mark.key=7;mark.tags={42};
+        InteractionPolicy selfBuff{InteractionIntent::Beneficial,mask(AllowedTarget::Self)};
+        auto owned=require(combat.applyOwnedEffect(attacker,attacker,mark,selfBuff));
         std::cout<<"health: "<<result.remaining<<", mana: "<<cost.after<<"\n";
         std::cout<<"permitted enemy mana change: "<<(drained.attribute?drained.attribute->actual:0)<<"\n";
+        std::cout<<"owned tag active: "<<require(combat.hasTag(attacker,42))<<"\n";
+        require(combat.removeOwnedEffect(owned.effectInstance));
         world.fixedUpdate(1.0f/60); // Normal engine Sim drives notification delivery.
         world.shutdown();return 0;
     } catch(const std::exception& error){std::cerr<<error.what()<<"\n";world.shutdown();return 1;}

@@ -37,6 +37,12 @@ struct GameplayFixture {
     StatsComponent& stats(ayt::entity::EntityHandle handle){return *world.getEntityByHandle(handle)->getComponent<StatsComponent>();}
     CombatComponent& actor(){return *world.getEntityByHandle(target)->getComponent<CombatComponent>();}
     Value hp(){return stats(target).read(statId("vitality"))->current;}
+    ayt::entity::EntityHandle additionalActor(std::uint64_t team) {
+        auto* entity=world.createEntity();auto handle=world.getEntityHandle(entity->getId());
+        ActorProfile profile{stats(source).state()->schema(),{statId("vitality")},team};
+        if(!combat->configureActor(handle,profile))throw std::runtime_error("additional profile");
+        return handle;
+    }
     static Recipe scaled(std::string name,StatId target,AttributeOp op,Value rate,bool defaultRecipe=false) {
         auto plan=CalculationPlan::compile({{.id=1,.op=Op::Input,.binding=0},{.id=2,.op=Op::Constant,.value=rate},
             {.id=3,.op=Op::MultiplyRate,.a=1,.b=2}},3,1).value();
@@ -151,6 +157,103 @@ TEST_CASE(permitted_capacity_effect_updates_life_without_business_sync) {
     CHECK_TRUE(f.combat->outcomes().empty() && f.combat->hits().activeAttacks()==0);
     CHECK_TRUE(f.stats(f.target).removeEffect(55).has_value());
     CHECK_TRUE(f.hp()==0 && f.actor().life()->phase()==LifePhase::Dead);
+}
+TEST_CASE(owned_instances_from_two_sources_keep_independent_numeric_and_status_contributions) {
+    GameplayFixture f;auto other=f.additionalActor(10);
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    InteractionPolicy policy{InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    EffectDefinition definition;definition.type=55;definition.key=77;definition.maxStacks=2;
+    definition.modifiers={{.rule=1,.target=statId("power"),.zone=1,.value=5000}};
+    definition.tags={7};definition.immuneEffects={91};definition.stunned=true;
+    auto first=f.combat->applyOwnedEffect(f.source,f.target,definition,policy).value();
+    auto second=f.combat->applyOwnedEffect(other,f.target,definition,policy).value();
+    CHECK_TRUE(first.decision.allowed && second.decision.allowed && first.effectInstance!=second.effectInstance);
+    CHECK_TRUE(f.combat->ownedEffectCount()==2 && f.stats(f.target).read(statId("power"))->effective==40);
+    CHECK_TRUE(f.combat->hasTag(f.target,7).value() && f.combat->immuneToEffect(f.target,91).value() && f.combat->stunned(f.target).value());
+    CHECK_TRUE(f.combat->damage(f.target,f.source,10).error().code==ayt::combat::Error::Invalid);
+    EffectDefinition denied;denied.type=91;denied.key=91;denied.tags={9};
+    CHECK_TRUE(f.combat->applyOwnedEffect(f.source,f.target,denied,policy)->decision.denial==InteractionDenial::Immune);
+    auto mismatched=definition;mismatched.maxStacks=3;
+    CHECK_TRUE(f.combat->applyOwnedEffect(f.source,f.target,mismatched,policy).error().code==ayt::combat::Error::Invalid);
+    const auto version=f.stats(f.target).version();
+    CHECK_TRUE(f.combat->applyOwnedEffect(f.source,f.target,definition,policy).error().code==ayt::combat::Error::Limit);
+    CHECK_TRUE(f.combat->ownedEffectCount()==2 && f.stats(f.target).version()==version);
+    CHECK_TRUE(f.combat->removeOwnedEffect(first.effectInstance).has_value());
+    CHECK_TRUE(f.combat->ownedEffectCount()==1 && f.stats(f.target).read(statId("power"))->effective==30);
+    CHECK_TRUE(f.combat->hasTag(f.target,7).value() && f.combat->immuneToEffect(f.target,91).value() && f.combat->stunned(f.target).value());
+    CHECK_TRUE(f.combat->removeOwnedEffect(second.effectInstance).has_value());
+    CHECK_TRUE(f.combat->ownedEffectCount()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+    CHECK_TRUE(!f.combat->hasTag(f.target,7).value() && !f.combat->immuneToEffect(f.target,91).value() && !f.combat->stunned(f.target).value());
+}
+TEST_CASE(owned_effect_replace_refresh_failure_and_expiry_keep_one_instance) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    InteractionPolicy policy{InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    EffectDefinition first;first.type=55;first.key=77;first.durationTicks=2;first.maxStacks=2;
+    first.modifiers={{.rule=1,.target=statId("power"),.zone=1,.value=5000}};first.tags={7};
+    const auto id=f.combat->applyOwnedEffect(f.source,f.target,first,policy)->effectInstance;
+    CHECK_TRUE(id && f.stats(f.target).read(statId("power"))->effective==30);
+    auto invalid=first;invalid.modifiers[0].target=statId("missing");invalid.tags={8};
+    const auto version=f.stats(f.target).version();
+    CHECK_FALSE(f.combat->replaceOwnedEffect(id,invalid).has_value());
+    CHECK_TRUE(f.stats(f.target).version()==version && f.combat->hasTag(f.target,7).value() && !f.combat->hasTag(f.target,8).value());
+    auto replacement=first;replacement.tags={8};replacement.immuneEffects={91};replacement.stunned=true;
+    replacement.modifiers[0].value=10000;
+    CHECK_TRUE(f.combat->replaceOwnedEffect(id,replacement).has_value());
+    CHECK_TRUE(f.combat->ownedEffectCount()==1 && f.stats(f.target).read(statId("power"))->effective==40);
+    CHECK_TRUE(!f.combat->hasTag(f.target,7).value() && f.combat->hasTag(f.target,8).value());
+    auto statusOnly=replacement;statusOnly.modifiers.clear();
+    CHECK_TRUE(f.combat->replaceOwnedEffect(id,statusOnly).has_value());
+    CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==20 && f.combat->hasTag(f.target,8).value());
+    CHECK_TRUE(f.combat->replaceOwnedEffect(id,replacement).has_value());
+    CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==40 && f.combat->ownedEffectCount()==1);
+    CHECK_TRUE(f.combat->refreshOwnedEffect(id,3).has_value());
+    f.world.fixedUpdate(.016f);f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->ownedEffectCount()==1 && f.combat->stunned(f.target).value());
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->ownedEffectCount()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+    CHECK_TRUE(!f.combat->hasTag(f.target,8).value() && !f.combat->immuneToEffect(f.target,91).value());
+}
+TEST_CASE(owned_effect_source_cleanup_and_failed_apply_leave_no_contribution) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    InteractionPolicy policy{InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    EffectDefinition effect;effect.type=55;effect.key=77;effect.tags={7};
+    effect.modifiers={{.rule=1,.target=statId("power"),.zone=1,.value=5000}};
+    auto bad=effect;bad.modifiers[0].target=statId("missing");
+    const auto version=f.stats(f.target).version();
+    CHECK_FALSE(f.combat->applyOwnedEffect(f.source,f.target,bad,policy).has_value());
+    CHECK_TRUE(f.stats(f.target).version()==version && f.combat->ownedEffectCount()==0 && !f.combat->hasTag(f.target,7).value());
+    auto first=f.combat->applyOwnedEffect(f.source,f.target,effect,policy).value();
+    CHECK_TRUE(first.effectInstance && f.combat->hasTag(f.target,7).value());
+    CHECK_TRUE(f.combat->removeSourceEffects(f.source).value()==1);
+    CHECK_TRUE(f.combat->ownedEffectCount()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+    auto second=f.combat->applyOwnedEffect(f.source,f.target,effect,policy).value();
+    CHECK_TRUE(second.effectInstance!=first.effectInstance);
+    f.world.destroyEntity(f.world.getEntityByHandle(f.source));
+    CHECK_TRUE(f.combat->hasTag(f.target,7).value() && f.stats(f.target).read(statId("power"))->effective==30);
+    CHECK_TRUE(f.combat->refreshOwnedEffect(second.effectInstance,2).error().code==ayt::combat::Error::Stale);
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->ownedEffectCount()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+    CHECK_TRUE(!f.combat->hasTag(f.target,7).value());
+}
+TEST_CASE(status_only_effect_and_component_replacement_release_owned_facts) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    InteractionPolicy policy{InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    EffectDefinition status;status.type=55;status.key=77;status.durationTicks=1;
+    status.tags={7};status.immuneEffects={91};status.stunned=true;
+    const auto version=f.stats(f.target).version();
+    auto id=f.combat->applyOwnedEffect(f.source,f.target,status,policy)->effectInstance;
+    CHECK_TRUE(id && f.stats(f.target).version()==version && f.combat->stunned(f.target).value());
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->ownedEffectCount()==0 && !f.combat->stunned(f.target).value() && f.stats(f.target).version()==version);
+    status.durationTicks=UINT64_MAX;
+    auto numeric=status;numeric.modifiers={{.rule=1,.target=statId("power"),.zone=1,.value=5000}};
+    CHECK_TRUE(f.combat->applyOwnedEffect(f.source,f.target,numeric,policy)->effectInstance!=id);
+    CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==30);
+    auto* entity=f.world.getEntityByHandle(f.target);
+    entity->removeComponent<CombatComponent>();entity->addComponent<CombatComponent>();
+    CHECK_TRUE(!f.combat->hasTag(f.target,7).value());
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->ownedEffectCount()==0 && f.stats(f.target).read(statId("power"))->effective==20);
 }
 TEST_CASE(invalid_recipe_shape_input_and_negative_output_never_mutate) {
     GameplayFixture f;const auto version=f.stats(f.target).version();
