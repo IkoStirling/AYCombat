@@ -62,10 +62,10 @@ TEST_CASE(unknown_and_neutral_relations_do_not_implicitly_allow_damage) {
 
 TEST_CASE(source_snapshot_keeps_attribution_without_live_entity_resolution) {
     auto saved = source();
-    saved.effect = 900; saved.ability = 7;
+    saved.effect = 900; saved.ability = 7; saved.abilityInstance = 81;
     CHECK_TRUE(validateSource(saved).has_value());
     CHECK_TRUE(filterTarget(saved, target(), relations(), {}).value().allowed);
-    CHECK_TRUE(saved.attribution == 100 && saved.directSource == actor(50));
+    CHECK_TRUE(saved.attribution == 100 && saved.directSource == actor(50) && saved.abilityInstance == 81);
     auto malformed = saved; malformed.instigator.reset();
     CHECK_TRUE(validateSource(malformed).error().code == Error::Invalid);
 }

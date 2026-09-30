@@ -22,11 +22,15 @@ struct CombatantRef {
 };
 enum class SourceKind { Actor, Environment };
 /// Owned provenance snapshot; retained identities do not keep source entities alive.
+/// directSource may identify the action provider (such as equipment), while instigator
+/// identifies the actor used for self/relation permission. Identity values are host-owned.
 struct SourceContext {
     SourceKind kind = SourceKind::Actor;
     std::optional<CombatantRef> instigator;
     std::optional<CombatantRef> directSource;
     std::uint64_t attribution = 0, team = 0, ability = 0, effect = 0;
+    /// Ability owner-assigned release instance; scoped by the source domain.
+    std::uint64_t abilityInstance = 0;
 };
 Result<void> validateSource(const SourceContext& source);
 
