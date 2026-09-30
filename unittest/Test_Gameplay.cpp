@@ -158,6 +158,44 @@ TEST_CASE(reconfiguration_restore_and_component_replacement_reconnect_automatica
     ayt::combat::SettlementRequest late;late.hit.target=old.ref;
     CHECK_TRUE(f.combat->submit(old,late,GameplayFixture::scaled("x",statId("vitality"),AttributeOp::Decrease,10000).plan,{}).error().code==ayt::combat::Error::Stale);
 }
+TEST_CASE(attach_existing_stats_preserves_values_effects_and_generation) {
+    GameplayFixture f;
+    auto* entity=f.world.createEntity();auto handle=f.world.getEntityHandle(entity->getId());
+    auto* stats=entity->addComponent<StatsComponent>();
+    auto schema=Schema::compile({
+        {.name="vitality",.shape=Shape::Pool,.current=100,.capacity=100},
+        {.name="armor",.mode=Mode::Advanced,.initial=20,.maximum=1000,.zones={{1,ZoneOp::Flat}}}
+    }).value();
+    CHECK_TRUE(stats->configure(schema).has_value());
+    const Mutation wounded{statId("vitality"),MutationOp::Decrease,30};
+    CHECK_TRUE(stats->commit(std::span(&wounded,1),stats->version()).has_value());
+    Effect boost{61,61,UINT64_MAX,1,{{.handle=61,.rule=1,.target=statId("armor"),.zone=1,.value=15}}};
+    CHECK_TRUE(stats->applyEffect(boost,EffectPolicy::Independent,0).has_value());
+    const auto generation=stats->generation(),version=stats->version();
+    const auto checkpoint=stats->checkpoint().value();
+    CHECK_TRUE(stats->enqueue({Mutation{statId("vitality"),MutationOp::Decrease,5}}).has_value());
+    CHECK_FALSE(f.combat->attachActor(handle,{statId("unknown")},30).has_value());
+    CHECK_TRUE(entity->getComponent<CombatComponent>()==nullptr);
+    stats->setAuthority(false);
+    CHECK_FALSE(f.combat->attachActor(handle,{statId("vitality")},30).has_value());
+    CHECK_TRUE(entity->getComponent<CombatComponent>()==nullptr);
+    stats->setAuthority(true);
+    CHECK_TRUE(f.combat->attachActor(handle,{statId("vitality")},30).has_value());
+    CHECK_TRUE(entity->getComponent<StatsComponent>()==stats && stats->generation()==generation && stats->version()==version);
+    CHECK_TRUE(stats->checkpoint().value()==checkpoint);
+    CHECK_TRUE(stats->read(statId("vitality"))->current==70 && stats->read(statId("armor"))->effective==35);
+    auto* actor=entity->getComponent<CombatComponent>();
+    CHECK_TRUE(actor && actor->team==30 && actor->life() && actor->life()->phase()==LifePhase::Alive);
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(stats->read(statId("vitality"))->current==65 && actor->life()->phase()==LifePhase::Alive);
+    CHECK_TRUE(f.combat->setRelation(10,30,Relation::Hostile).has_value());
+    auto hit=f.combat->damage(f.source,handle,20).value();
+    CHECK_TRUE(hit.actual==20 && hit.remaining==45 && stats->read(statId("armor"))->effective==35);
+    entity->removeComponent<CombatComponent>();
+    actor=entity->addComponent<CombatComponent>();
+    CHECK_TRUE(actor->team==30 && actor->life() && actor->life()->phase()==LifePhase::Alive);
+    CHECK_TRUE(stats->read(statId("vitality"))->current==45 && stats->read(statId("armor"))->effective==35);
+}
 TEST_CASE(batch_publication_completes_life_before_any_bank_callback) {
     GameplayFixture f;auto& a=f.stats(f.source);auto& b=f.stats(f.target);
     int callbacks=0;

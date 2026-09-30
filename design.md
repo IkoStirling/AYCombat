@@ -51,8 +51,11 @@ Life/immuneTypes/attacks/outcomes are runtime state; serializable team/capabilit
 ## Gameplay facade and automatic integration (N0–N2)
 
 The default installCombat(World) entry hides settlement machinery and maintains
-consistency between Entity, Stats and Combat. configureActor stores one-time
-configuration for current actor replacement. damage/heal use that life mapping;
+consistency between Entity, Stats and Combat. configureActor initializes or
+deliberately rebuilds numerical state. attachActor adopts an already configured,
+authoritative StatsComponent without changing its state, effects, version or
+generation; both retain the life/profile mapping for Combat component replacement.
+damage/heal use that life mapping;
 increase/decrease/setAttribute reuse the Stats World service and recipe book.
 Advanced APIs remain available through the same settlement chain.
 

@@ -22,6 +22,10 @@ In the root engine build enable `AY_ENABLE_COMBAT` and `AY_ENABLE_STATS` (both d
 
 Enable `AY_COMBAT_BUILD_ENTITY=ON` in a root engine build to link `AYCombat::Entity`. Before registry seal call `registerCombatGameplayComponents`, then `installCombat(world)` acquires the World-owned gameplay facade and installs its numerical dependencies. Configure each actor once with `ActorProfile` (Stats schema, mapped life pool, life policy and team), then configure explicit directional team relations. Different teams are not implicitly hostile.
 
+`configureActor` initializes or deliberately rebuilds an actor's Stats from its schema. For an Entity that already has configured authoritative Stats, call `attachActor(handle, lifePolicy, team)` instead. It validates the existing persistent life pool, adds Combat if needed, and preserves values, effects, version, generation and pending commands.
+
+For a reproducible local pairing, AYStats has a compatible snapshot on branch `codex/combat-compatible-stats` at `6ea15f80dde6d154eea1ab1873d55e2d7ae51ccc`. It captures the validated Stats working tree without changing its active `main` branch or staging its other work. Both repositories remain local with no remote.
+
 ```cpp
 auto& combat = *installCombat(world).value(); // Check Result in production; see Gameplay.cpp.
 // configureActor(source, profile) and configureActor(target, profile) once.
@@ -29,6 +33,7 @@ auto damage = combat.damage(source, target, 30);
 auto heal = combat.heal(target, target, 10);
 auto cost = combat.decrease(source, "mana", 20);
 auto alternateCost = combat.decrease(source, "mana", 20, "skill_cost");
+// Existing Stats state: combat.attachActor(source, {statId("vitality")}, 1);
 ```
 
 Routine calls need no calculation plan, input span, expected version, binding or ledger management. Damage/heal return `ActionResult` with non-negative actual amount, remaining pool value, excess and optional life transition. Generic `increase/decrease/setAttribute` return before/after and signed actual delta in `AttributeResult`; they change pool current or scalar base without inventing damage permission/attribution. Configure a Stats `RecipeBook` once with `attributes().setRecipes`: defaults are indexed by target stat and Increase/Decrease/Set, explicit compatible names override them, and missing defaults use direct amount. Inputs sample current source/target state or authored constants; pure formulas remain in Stats. Source-bound generic recipes use `changeAttribute` with an explicit source. Recipe metadata is runtime configuration owned by Stats.

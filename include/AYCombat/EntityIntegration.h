@@ -87,8 +87,13 @@ public:
     std::vector<CombatOutcome> takeOutcomes();
     /// Advanced explicit delivery; normal gameplay installation drains this automatically.
     std::vector<LifeEvent> takeLifeEvents();
-    /// Recommended gameplay configuration: adds/configures the required actor components once.
+    /// Initialize or deliberately rebuild Stats from a schema, then configure the Combat actor.
+    /// Existing numerical state and effects are replaced; use attachActor to retain them.
     Result<void> configureActor(ayt::entity::EntityHandle, const ActorProfile&);
+    /// Attach Combat to an already configured authoritative StatsComponent without rewriting it.
+    /// The life mapping must name a persistent pool in the existing schema.
+    Result<void> attachActor(ayt::entity::EntityHandle, LifePolicy, std::uint64_t team,
+        std::uint32_t capabilities=mask(Capability::Damageable)|mask(Capability::Healable));
     /// Uses the target's mapped life pool and configured default/explicit Stats recipe.
     /// Permission and actual-value results match advanced submit; each call is a new action.
     Result<ActionResult> damage(ayt::entity::EntityHandle source, ayt::entity::EntityHandle target,

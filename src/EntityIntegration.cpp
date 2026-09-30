@@ -239,6 +239,32 @@ Result<void> CombatSystem::configureActor(ayt::entity::EntityHandle handle,const
     if(record==_actors.end())_actors.push_back(saved);else *record=saved;
     _automatic=true;return {};
 }
+Result<void> CombatSystem::attachActor(ayt::entity::EntityHandle handle,LifePolicy life,std::uint64_t team,std::uint32_t capabilities) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"actor attachment during settlement/delivery");
+    auto* entity=_world?_world->getEntityByHandle(handle):nullptr;
+    if(!entity)return fail(Error::Stale,"actor Entity is unavailable");
+    auto* stats=entity->getComponent<ayt::stats::StatsComponent>();
+    if(!stats || !stats->state())return fail(Error::Missing,"actor requires configured Stats");
+    if(!stats->authority())return fail(Error::Invalid,"cannot attach a replica actor");
+    if(!life.resource || (life.depleted!=LifePhase::Dead && life.depleted!=LifePhase::Downed) ||
+        (capabilities&~(mask(Capability::Damageable)|mask(Capability::Healable))))return fail(Error::Invalid,"invalid actor policy");
+    const auto index=stats->state()->schema()->index(life.resource);
+    if(!index || stats->state()->schema()->definitions()[*index].shape!=ayt::stats::Shape::Pool ||
+        stats->state()->schema()->definitions()[*index].lifetime!=ayt::stats::Lifetime::Persistent)
+        return fail(Error::Invalid,"actor life requires an existing persistent pool");
+    if(!ayt::entity::World::isComponentTypeRegistered<CombatComponent>())
+        return fail(Error::Missing,"register Combat component before registry seal");
+    std::erase_if(_actors,[&](const auto& record){return !_world->getEntityByHandle(record.handle);});
+    auto record=std::find_if(_actors.begin(),_actors.end(),[&](const auto& r){return r.handle==handle;});
+    if(record==_actors.end() && _actors.size()>=ayt::entity::MAX_ENTITIES)return fail(Error::Limit,"actor configuration capacity");
+    auto* combat=entity->addComponent<CombatComponent>();
+    auto configured=combat->configureLife(*stats,life);
+    if(!configured)return configured;
+    combat->team=team;combat->capabilities=capabilities;
+    ActorRecord saved{handle,life,team,capabilities};
+    if(record==_actors.end())_actors.push_back(saved);else *record=saved;
+    _automatic=true;return {};
+}
 Result<void> CombatSystem::setRelation(std::uint64_t source,std::uint64_t target,Relation relation) {
     if(_settling || _delivering)return fail(Error::Reentrant,"relation change during settlement/delivery");
     return _relations.set(source,target,relation);
