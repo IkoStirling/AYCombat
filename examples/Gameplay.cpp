@@ -29,7 +29,10 @@ int main() {
 
         auto result=require(combat.damage(attacker,target,30));
         auto cost=require(combat.decrease(attacker,"mana",10));
+        InteractionPolicy hostileDrain{InteractionIntent::Harmful,mask(AllowedTarget::Hostile)};
+        auto drained=require(combat.interactAttribute(attacker,target,"mana",ayt::stats::AttributeOp::Decrease,5,hostileDrain));
         std::cout<<"health: "<<result.remaining<<", mana: "<<cost.after<<"\n";
+        std::cout<<"permitted enemy mana change: "<<(drained.attribute?drained.attribute->actual:0)<<"\n";
         world.fixedUpdate(1.0f/60); // Normal engine Sim drives notification delivery.
         world.shutdown();return 0;
     } catch(const std::exception& error){std::cerr<<error.what()<<"\n";world.shutdown();return 1;}

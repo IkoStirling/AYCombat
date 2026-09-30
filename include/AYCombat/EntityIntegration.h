@@ -1,5 +1,6 @@
 #pragma once
 #include <AYCombat/StatsIntegration.h>
+#include <AYCombat/Interaction.h>
 #include <AYStats/EntityIntegration.h>
 
 namespace ayt::combat {
@@ -27,6 +28,14 @@ struct ActionResult {
 };
 /// Generic attribute result: signed actual delta, before/after values and boundary excess.
 struct AttributeResult { ayt::stats::Value before=0,after=0,actual=0,excess=0; };
+/// A denied interaction has no numerical result or effect instance. Source is an owned snapshot.
+struct InteractionResult {
+    InteractionDecision decision;
+    SourceContext source;
+    CombatantRef target;
+    std::optional<AttributeResult> attribute;
+    std::uint64_t effectInstance=0;
+};
 /// Entity identity plus both component incarnations. A replacement invalidates queued work.
 struct EntityBinding {
     CombatantRef ref;
@@ -48,6 +57,8 @@ public:
     AY_PROPERTY(std::uint32_t, depletedPhase, ayt::entity::kAttrSerialize)
     AY_PROPERTY(bool, healingRevives, ayt::entity::kAttrSerialize)
     std::vector<std::uint64_t> immuneTypes;
+    /// Current base facts; N4 will add separately owned status contributions.
+    std::vector<std::uint64_t> tags,immuneEffects;
     std::uint64_t generation() const noexcept { return _generation; }
     /// Configure the life mapping once. Internal publication automatically renews Stats incarnations.
     Result<void> configureLife(const ayt::stats::StatsComponent& stats, LifePolicy policy);
@@ -104,6 +115,14 @@ public:
     Result<AttributeResult> changeAttribute(ayt::entity::EntityHandle target,std::string_view stat,
         ayt::stats::AttributeOp operation,ayt::stats::Value amount,std::string_view recipe={},
         std::optional<ayt::entity::EntityHandle> source={});
+    /// Source-aware single-target operation; policy expresses intent independently of value sign.
+    /// Candidate selection is supplied by the caller; denial commits nothing.
+    Result<InteractionResult> interactAttribute(ayt::entity::EntityHandle source,ayt::entity::EntityHandle target,
+        std::string_view stat,ayt::stats::AttributeOp operation,ayt::stats::Value amount,
+        InteractionPolicy policy,bool selected=false,std::string_view recipe={});
+    /// Apply one Stats numerical effect after permission; instance ownership beyond Stats is N4.
+    Result<InteractionResult> applyEffect(ayt::entity::EntityHandle source,ayt::entity::EntityHandle target,
+        ayt::stats::Effect effect,ayt::stats::EffectPolicy stackPolicy,InteractionPolicy policy,bool selected=false);
     Result<AttributeResult> increase(ayt::entity::EntityHandle target,std::string_view stat,ayt::stats::Value amount,std::string_view recipe={}) {
         return changeAttribute(target,stat,ayt::stats::AttributeOp::Increase,amount,recipe);
     }
@@ -141,6 +160,8 @@ private:
     std::function<void(const LifeEvent&)> _onLife;
     std::optional<Diagnostic> _error;
     Result<ActionResult> act(Operation,ayt::entity::EntityHandle,ayt::entity::EntityHandle,ayt::stats::Value,std::string_view);
+    Result<InteractionResult> authorizeInteraction(ayt::entity::EntityHandle,ayt::entity::EntityHandle,
+        InteractionPolicy,bool);
     void initializeComponent(ayt::entity::EntityHandle,CombatComponent&);
     friend class CombatComponent;
     friend class StatsPublicationBridge;

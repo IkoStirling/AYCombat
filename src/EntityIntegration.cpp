@@ -10,6 +10,19 @@ AY_FINALIZE_REGISTRATION_METADATA(CombatComponent)
 namespace {
 std::atomic_uint64_t generations = 0;
 auto fail(Error code, const char* message) { return std::unexpected(Diagnostic{code, message, {}}); }
+Diagnostic numericDiagnostic(const ayt::stats::Diagnostic& error) {
+    auto code=Error::NumericFailure;
+    switch(error.code) {
+    case ayt::stats::Error::Invalid:code=Error::Invalid;break;
+    case ayt::stats::Error::Missing:code=Error::Missing;break;
+    case ayt::stats::Error::Duplicate:code=Error::Duplicate;break;
+    case ayt::stats::Error::Stale:code=Error::Stale;break;
+    case ayt::stats::Error::Limit:code=Error::Limit;break;
+    case ayt::stats::Error::Reentrant:code=Error::Reentrant;break;
+    default:break;
+    }
+    return {code,error.message,error.path};
+}
 ActionResult gameplayResult(const CombatOutcome& outcome) noexcept {
     ActionResult result{outcome.kind,outcome.calculated,0,outcome.remaining,0,outcome.attack.id,outcome.decision,outcome.rule,outcome.life};
     if(!outcome.settlement.changes.empty()) {
@@ -283,6 +296,52 @@ Result<AttributeResult> CombatSystem::changeAttribute(ayt::entity::EntityHandle 
     if(!result)return std::unexpected(Diagnostic{result.error().code==ayt::stats::Error::Reentrant?Error::Reentrant:
         (result.error().code==ayt::stats::Error::Stale?Error::Stale:(result.error().code==ayt::stats::Error::Limit?Error::Limit:Error::NumericFailure)),result.error().message,result.error().path});
     const auto& change=result->changes.front();return AttributeResult{change.before,change.after,change.actual,change.excess};
+}
+Result<InteractionResult> CombatSystem::authorizeInteraction(ayt::entity::EntityHandle sourceHandle,
+    ayt::entity::EntityHandle targetHandle,InteractionPolicy policy,bool selected) {
+    if(!_world || !_stats)return fail(Error::Missing,"combat is not installed");
+    auto source=bindCombatant(*_world,sourceHandle);if(!source)return std::unexpected(source.error());
+    auto target=bindCombatant(*_world,targetHandle);if(!target)return std::unexpected(target.error());
+    auto actor=resolve(*_world,*source);if(!actor)return std::unexpected(actor.error());
+    auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
+    SourceContext provenance;
+    provenance.instigator=source->ref;provenance.directSource=source->ref;
+    provenance.team=actor->combat->team;provenance.attribution=source->ref.object;
+    CombatantView view{target->ref,current->combat->team,current->combat->capabilities,true};
+    InteractionFacts facts{selected,current->combat->tags,current->combat->immuneEffects};
+    auto decision=checkInteraction(provenance,view,_relations,policy,facts);
+    if(!decision)return std::unexpected(decision.error());
+    return InteractionResult{*decision,provenance,target->ref};
+}
+Result<InteractionResult> CombatSystem::interactAttribute(ayt::entity::EntityHandle source,
+    ayt::entity::EntityHandle target,std::string_view stat,ayt::stats::AttributeOp operation,
+    ayt::stats::Value amount,InteractionPolicy policy,bool selected,std::string_view recipe) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"interaction during settlement/delivery");
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    auto interaction=authorizeInteraction(source,target,policy,selected);
+    if(!interaction || !interaction->decision.allowed)return interaction;
+    auto settled=_stats->change(target,stat,operation,amount,recipe,source);
+    if(!settled)return std::unexpected(numericDiagnostic(settled.error()));
+    const auto& change=settled->changes.front();
+    interaction->attribute=AttributeResult{change.before,change.after,change.actual,change.excess};
+    return interaction;
+}
+Result<InteractionResult> CombatSystem::applyEffect(ayt::entity::EntityHandle source,
+    ayt::entity::EntityHandle target,ayt::stats::Effect effect,ayt::stats::EffectPolicy stackPolicy,
+    InteractionPolicy policy,bool selected) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"effect interaction during settlement/delivery");
+    if(!policy.effectType)return fail(Error::Invalid,"effect interaction requires an authored effect type");
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    auto interaction=authorizeInteraction(source,target,policy,selected);
+    if(!interaction || !interaction->decision.allowed)return interaction;
+    auto* entity=_world->getEntityByHandle(target);
+    auto* stats=entity?entity->getComponent<ayt::stats::StatsComponent>():nullptr;
+    if(!stats || !stats->authority() || !stats->state())return fail(Error::Stale,"target Stats changed before effect application");
+    const auto instance=effect.id;
+    auto applied=stats->applyEffect(std::move(effect),stackPolicy,_stats->tick());
+    if(!applied)return std::unexpected(numericDiagnostic(applied.error()));
+    interaction->effectInstance=instance;
+    return interaction;
 }
 Result<ActionResult> CombatSystem::act(Operation operation,ayt::entity::EntityHandle sourceHandle,ayt::entity::EntityHandle targetHandle,
     ayt::stats::Value amount,std::string_view recipe) {

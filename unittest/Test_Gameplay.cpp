@@ -91,6 +91,67 @@ TEST_CASE(attribute_defaults_scalar_base_and_modifiers_share_the_same_owner) {
     CHECK_TRUE(f.combat->setAttribute(f.target,"power",40)->actual==10);
     CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==60);
 }
+TEST_CASE(permitted_attribute_uses_intent_relation_selection_tag_and_capability) {
+    GameplayFixture f;auto& target=f.actor();
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    InteractionPolicy policy{InteractionIntent::Beneficial,mask(AllowedTarget::Friendly),9,7,true};
+    target.tags={7};const auto originalVersion=f.stats(f.target).version();
+    auto unselected=f.combat->interactAttribute(f.source,f.target,"mana",AttributeOp::Decrease,10,policy).value();
+    CHECK_TRUE(!unselected.decision.allowed && unselected.decision.denial==InteractionDenial::NotSelected && !unselected.attribute);
+    target.tags.clear();
+    auto untagged=f.combat->interactAttribute(f.source,f.target,"mana",AttributeOp::Decrease,10,policy,true).value();
+    CHECK_TRUE(untagged.decision.denial==InteractionDenial::MissingTag);
+    target.tags={7};target.immuneEffects={9};
+    CHECK_TRUE(f.combat->interactAttribute(f.source,f.target,"mana",AttributeOp::Decrease,10,policy,true)->decision.denial==InteractionDenial::Immune);
+    target.immuneEffects.clear();target.capabilities=mask(Capability::Damageable);
+    CHECK_TRUE(f.combat->interactAttribute(f.source,f.target,"mana",AttributeOp::Decrease,10,policy,true)->decision.denial==InteractionDenial::MissingCapability);
+    target.capabilities=mask(Capability::Damageable)|mask(Capability::Healable);
+    CHECK_TRUE(f.stats(f.target).version()==originalVersion && f.stats(f.target).read(statId("mana"))->current==80);
+    auto permitted=f.combat->interactAttribute(f.source,f.target,"mana",AttributeOp::Decrease,10,policy,true).value();
+    CHECK_TRUE(permitted.decision.allowed && permitted.attribute && permitted.attribute->actual==-10);
+    CHECK_TRUE(permitted.source.team==10 && permitted.target.object==f.target.id && f.stats(f.target).read(statId("mana"))->current==70);
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Hostile).has_value());
+    const auto before=f.stats(f.target).version();
+    CHECK_TRUE(f.combat->interactAttribute(f.source,f.target,"mana",AttributeOp::Decrease,10,policy,true)->decision.denial==InteractionDenial::RelationForbidden);
+    CHECK_TRUE(f.stats(f.target).version()==before);
+    policy.relationSnapshot=Relation::Friendly;
+    auto captured=f.combat->interactAttribute(f.source,f.target,"mana",AttributeOp::Decrease,5,policy,true).value();
+    CHECK_TRUE(captured.decision.allowed && captured.decision.relation==Relation::Friendly && captured.attribute->actual==-5);
+    policy.relationSnapshot.reset();
+    policy.intent=InteractionIntent::Harmful;policy.allowed=mask(AllowedTarget::Hostile);
+    auto hostile=f.combat->interactAttribute(f.source,f.target,"rage",AttributeOp::Increase,10,policy,true).value();
+    CHECK_TRUE(hostile.decision.allowed && hostile.attribute->actual==10 && f.stats(f.target).read(statId("rage"))->current==10);
+    CHECK_TRUE(f.combat->hits().activeAttacks()==0 && f.combat->outcomes().empty());
+}
+TEST_CASE(permitted_effect_checks_immunity_before_stats_publication) {
+    GameplayFixture f;auto& target=f.actor();
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    InteractionPolicy policy{InteractionIntent::Beneficial,mask(AllowedTarget::Friendly),91,7,true};
+    target.tags={7};target.immuneEffects={91};
+    Effect boost{91,91,UINT64_MAX,1,{{.handle=91,.rule=1,.target=statId("power"),.zone=1,.value=5000}}};
+    const auto version=f.stats(f.target).version();
+    auto denied=f.combat->applyEffect(f.source,f.target,boost,EffectPolicy::Independent,policy,true).value();
+    CHECK_TRUE(denied.decision.denial==InteractionDenial::Immune && denied.effectInstance==0);
+    CHECK_TRUE(f.stats(f.target).version()==version && f.stats(f.target).read(statId("power"))->effective==20);
+    target.immuneEffects.clear();
+    auto applied=f.combat->applyEffect(f.source,f.target,boost,EffectPolicy::Independent,policy,true).value();
+    CHECK_TRUE(applied.decision.allowed && applied.effectInstance==91 && applied.source.team==10);
+    CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==30);
+    CHECK_TRUE(f.stats(f.target).removeEffect(91).has_value());
+    CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==20);
+    policy.effectType=0;
+    CHECK_TRUE(f.combat->applyEffect(f.source,f.target,boost,EffectPolicy::Independent,policy,true).error().code==ayt::combat::Error::Invalid);
+}
+TEST_CASE(permitted_capacity_effect_updates_life_without_business_sync) {
+    GameplayFixture f;InteractionPolicy harmful{InteractionIntent::Harmful,mask(AllowedTarget::Hostile),55};
+    Effect suppress{55,55,UINT64_MAX,1,{{.handle=55,.rule=1,.target=statId("capacity"),.zone=1,.value=-100}}};
+    auto applied=f.combat->applyEffect(f.source,f.target,suppress,EffectPolicy::Independent,harmful).value();
+    CHECK_TRUE(applied.decision.allowed && applied.effectInstance==55);
+    CHECK_TRUE(f.hp()==0 && f.actor().life()->phase()==LifePhase::Dead);
+    CHECK_TRUE(f.combat->outcomes().empty() && f.combat->hits().activeAttacks()==0);
+    CHECK_TRUE(f.stats(f.target).removeEffect(55).has_value());
+    CHECK_TRUE(f.hp()==0 && f.actor().life()->phase()==LifePhase::Dead);
+}
 TEST_CASE(invalid_recipe_shape_input_and_negative_output_never_mutate) {
     GameplayFixture f;const auto version=f.stats(f.target).version();
     auto wrong=GameplayFixture::scaled("mana_only",statId("mana"),AttributeOp::Decrease,10000);

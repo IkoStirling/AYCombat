@@ -6,7 +6,7 @@
 
 Core is C++23 and standard-library-only. It owns no Entity, World, Stats pool or game object. It provides owned provenance values, directional team relations, pure operation permission checks, stable selection of already-mapped collider candidates, and a single-owner hit ledger. The optional Stats target executes a real immutable CalculationPlan and commits one persistent pool in one caller-owned StatSet.
 
-Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Generic permitted effects/area membership, physics, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
+Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Combat-owned effect instances/contributions, area membership, physics, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
 
 ## Identity and ownership
 
@@ -108,11 +108,12 @@ Authored life mapping serializes the attribute name instead of a floating-point
 representation of its 64-bit ID. Other authored life fields serialize, while recipe books,
 actor profile registries and runtime phase/sequence are not checkpoints.
 
-## Accepted follow-up: recipes, generic changes and area effects
+## Generic changes, N3 permission and planned area effects
 
 The post-implementation discussion is consolidated in engine plan section 16.
-The first milestone has delivered numerical contracts, internal publication and
-simple numerical entries. Permission/effect instance and area portions below remain planned.
+N0–N3 have delivered numerical contracts, internal publication, simple numerical
+entries and a single-target interaction gate. Combat-owned effect instances and
+area membership remain planned.
 
 - Damage/heal resolve the profile's life pool. Generic operations select another
   stat and Increase/Decrease/Set intent. Persistent pools normally mutate current;
@@ -125,7 +126,7 @@ simple numerical entries. Permission/effect instance and area portions below rem
   Direct amount recipes provide the basic default. There is no Combat formula bank.
 - Direct numerical changes use Combat increase/decrease/setAttribute, or the Stats
   gameplay facade when no combat integration is needed. Interactions needing
-  generic source attribution and target permission will use the planned generic action path.
+  generic source attribution and target permission use interactAttribute or applyEffect.
   Generic life-pool mutation updates life policy but does not invent a damage hit,
   damage event or kill attribution. General command deduplication is distinct from
   damage hit allowance. Simple and advanced entries share numerical ownership.
@@ -136,8 +137,18 @@ simple numerical entries. Permission/effect instance and area portions below rem
   Controlled effect removal/update and scoped connections are integration work;
   the const Stats state view is never bypassed.
 - Candidate discovery, selection eligibility and operation permission are separate.
-  Generic changes and ApplyEffect require declared intent, relation and immunity
-  policy; a signed output alone cannot determine beneficial/harmful permission.
+  N3 checkInteraction evaluates current source/target identities, directional relation
+  (or an explicitly supplied captured relation),
+  intent-based target capability, caller-supplied selection, target base tag and effect
+  immunity. Invalid policy/identity is an error; ordinary denial is an owned decision
+  with no Stats write. Intent is explicit and never inferred from a signed output.
+  The Entity facade requires both actors to be currently bound in the same World,
+  checks current relation and facts, then calls the existing Stats attribute/effect
+  entry. The successful result retains a source snapshot. It does not create a hit,
+  damage outcome or Combat-owned effect instance. Stats effect removal/update and
+  automatic life publication remain available independently. Current facts are
+  base component vectors and request selection; dynamic contributions and area
+  rechecks belong to N4/N5.
 - A reusable effect definition produces independent application instances. Each
   instance owns numerical modifier handles and any nonnumerical status/tag
   contributions. Removal releases only those contributions; overlapping stun or
