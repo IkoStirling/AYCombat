@@ -24,7 +24,7 @@ Enable `AY_COMBAT_BUILD_ENTITY=ON` in a root engine build to link `AYCombat::Ent
 
 `configureActor` initializes or deliberately rebuilds an actor's Stats from its schema. For an Entity that already has configured authoritative Stats, call `attachActor(handle, lifePolicy, team)` instead. It validates the existing persistent life pool, adds Combat if needed, and preserves values, effects, version, generation and pending commands.
 
-For a reproducible local pairing, AYStats has a compatible snapshot on branch `codex/combat-compatible-stats` at `6ea15f80dde6d154eea1ab1873d55e2d7ae51ccc`. It captures the validated Stats working tree without changing its active `main` branch or staging its other work. Both repositories remain local with no remote.
+For a reproducible local pairing, use AYStats `main` at `602c57c` or newer; its combat-compatible source baseline is `6ea15f80dde6d154eea1ab1873d55e2d7ae51ccc`. The `codex/combat-compatible-stats` branch retains that baseline for traceability. Both repositories remain local with no remote.
 
 ```cpp
 auto& combat = *installCombat(world).value(); // Check Result in production; see Gameplay.cpp.
