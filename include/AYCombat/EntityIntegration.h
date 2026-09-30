@@ -50,6 +50,28 @@ struct EntityBinding {
     CombatantRef ref;
     std::uint64_t statsGeneration = 0, combatGeneration = 0;
 };
+/// A headless provider returns current in-range candidates and their selection fact.
+struct AreaCandidate { ayt::entity::EntityHandle target; bool selected=false; };
+using AreaCandidateProvider = std::function<Result<std::vector<AreaCandidate>>() >;
+struct AreaDefinition {
+    EffectDefinition effect;
+    InteractionPolicy permission;
+    std::size_t maxCandidates=1024,maxMembers=1024;
+    bool requireTargetAlive=true;
+};
+enum class AreaTargetState { Entered, Retained, Exited, Rejected, Failed };
+struct AreaTargetResult {
+    ayt::entity::EntityHandle target;
+    AreaTargetState state=AreaTargetState::Rejected;
+    std::uint64_t instance=0;
+    InteractionDenial denial=InteractionDenial::None;
+    std::optional<Diagnostic> error;
+};
+struct AreaSweep {
+    std::uint64_t area=0,tick=0;
+    bool ended=false;
+    std::vector<AreaTargetResult> targets;
+};
 #define AY_CURRENT_CLASS CombatComponent
 class CombatComponent final : public ayt::entity::IComponent {
 public:
@@ -141,7 +163,8 @@ public:
     Result<void> replaceOwnedEffect(std::uint64_t instance,EffectDefinition definition);
     /// Removal requires a registered instance; unknown IDs return Missing.
     Result<void> removeOwnedEffect(std::uint64_t instance);
-    /// Source cancellation removes each live contribution; targets settle independently.
+    /// Source cancellation also stops its areas, then removes remaining instances;
+    /// targets settle independently.
     Result<std::size_t> removeSourceEffects(ayt::entity::EntityHandle source);
     /// Effective facts combine base facts and each live owned contribution.
     Result<bool> hasTag(ayt::entity::EntityHandle target,std::uint64_t tag) const;
@@ -149,6 +172,16 @@ public:
     Result<bool> immuneToDamageType(ayt::entity::EntityHandle target,std::uint64_t type) const;
     Result<bool> stunned(ayt::entity::EntityHandle target) const;
     std::size_t ownedEffectCount() const noexcept {return _owned.size();}
+    /// N5 headless area: a pure provider enumerates all current in-range candidates.
+    /// Fixed Sim rechecks current permission and selection; retained members are not reapplied.
+    Result<std::uint64_t> startArea(ayt::entity::EntityHandle source,AreaDefinition definition,
+        AreaCandidateProvider provider);
+    Result<AreaSweep> updateArea(std::uint64_t area);
+    Result<AreaSweep> stopArea(std::uint64_t area);
+    Result<AreaSweep> lastAreaSweep(std::uint64_t area) const;
+    Result<std::size_t> areaMemberCount(std::uint64_t area) const;
+    /// Optional fixed-Sim delivery, including automatically ended areas.
+    void setOnAreaSweep(std::function<void(const AreaSweep&)> callback) {_onAreaSweep=std::move(callback);}
     Result<AttributeResult> increase(ayt::entity::EntityHandle target,std::string_view stat,ayt::stats::Value amount,std::string_view recipe={}) {
         return changeAttribute(target,stat,ayt::stats::AttributeOp::Increase,amount,recipe);
     }
@@ -187,12 +220,26 @@ private:
     static constexpr std::size_t OwnedEffectLimit = 65536;
     std::vector<OwnedEffect> _owned;
     std::uint64_t _nextOwnedId=std::uint64_t{1}<<63,_nextModifierHandle=std::uint64_t{1}<<63;
+    struct AreaMember { ayt::entity::EntityHandle target; std::uint64_t instance=0; };
+    struct AreaRecord {
+        std::uint64_t id=0;
+        ayt::entity::EntityHandle source;
+        EntityBinding sourceBinding;
+        AreaDefinition definition;
+        AreaCandidateProvider provider;
+        std::vector<AreaMember> members;
+        AreaSweep last;
+    };
+    static constexpr std::size_t AreaLimit=1024;
+    std::vector<AreaRecord> _areas;
+    std::uint64_t _nextAreaId=0;
     std::vector<LifeEvent> _lifeEvents;
     std::shared_ptr<StatsPublicationBridge> _publication;
     struct ActorRecord { ayt::entity::EntityHandle handle; LifePolicy life; std::uint64_t team; std::uint32_t capabilities; };
     std::vector<ActorRecord> _actors;
     std::function<void(const ActionResult&)> _onOutcome;
     std::function<void(const LifeEvent&)> _onLife;
+    std::function<void(const AreaSweep&)> _onAreaSweep;
     std::optional<Diagnostic> _error;
     Result<ActionResult> act(Operation,ayt::entity::EntityHandle,ayt::entity::EntityHandle,ayt::stats::Value,std::string_view);
     Result<InteractionResult> authorizeInteraction(ayt::entity::EntityHandle,ayt::entity::EntityHandle,

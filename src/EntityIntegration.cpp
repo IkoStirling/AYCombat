@@ -218,6 +218,19 @@ void CombatSystem::onUpdate(float) {
     if(!_world || _settling || _delivering)return;
     std::erase_if(_actors,[&](const auto& record){return !_world->getEntityByHandle(record.handle);});
     pruneOwnedEffects();
+    std::vector<std::uint64_t> areas;areas.reserve(_areas.size());
+    for(const auto& area:_areas)areas.push_back(area.id);
+    for(auto id:areas) {
+        auto sweep=updateArea(id);
+        if(!sweep){_error=sweep.error();continue;}
+        for(const auto& target:sweep->targets)if(target.error)_error=*target.error;
+        auto callback=_onAreaSweep;
+        if(callback) {
+            _delivering=true;
+            try{callback(*sweep);}catch(...){_error=Diagnostic{Error::Invalid,"area sweep observer threw after update",{}};}
+            _delivering=false;
+        }
+    }
     if(!_automatic)return;
     _delivering=true;struct Guard{bool& flag;~Guard(){flag=false;}} guard{_delivering};
     auto outcomeCallback=_onOutcome;auto lifeCallback=_onLife;
@@ -522,8 +535,14 @@ Result<void> CombatSystem::removeOwnedEffect(std::uint64_t instance) {
 Result<std::size_t> CombatSystem::removeSourceEffects(ayt::entity::EntityHandle source) {
     if(_settling || _delivering)return fail(Error::Reentrant,"source effect removal during settlement/delivery");
     if(!_world || !_stats)return fail(Error::Missing,"combat is not installed");
-    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
     std::size_t count=0;
+    for(std::size_t i=0;i<_areas.size();) {
+        if(_areas[i].source!=source){++i;continue;}
+        auto stopped=stopArea(_areas[i].id);if(!stopped)return std::unexpected(stopped.error());
+        for(const auto& target:stopped->targets)if(target.state==AreaTargetState::Exited)++count;
+        if(!stopped->ended)return fail(Error::NumericFailure,"source area cleanup has failed targets; retry cancellation");
+    }
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
     for(std::size_t i=0;i<_owned.size();) {
         const auto& ref=_owned[i].source.ref;
         if(ref.domain!=_token || ref.object!=source.id || ref.generation!=std::uint64_t(source.version)+1){++i;continue;}
@@ -537,6 +556,151 @@ void CombatSystem::pruneOwnedEffects() {
         auto removed=removeOwnedAt(i);
         if(!removed){_error=removed.error();++i;}
     }
+}
+Result<std::uint64_t> CombatSystem::startArea(ayt::entity::EntityHandle source,
+    AreaDefinition definition,AreaCandidateProvider provider) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"area creation during settlement/delivery");
+    if(!_world || !_stats)return fail(Error::Missing,"combat is not installed");
+    if(!provider || !validDefinition(definition.effect) || !definition.permission.allowed ||
+        (definition.permission.allowed&~std::uint32_t{63}) || !definition.maxCandidates || !definition.maxMembers ||
+        definition.maxCandidates>65536 || definition.maxMembers>65536 ||
+        (definition.permission.intent!=InteractionIntent::Beneficial &&
+         definition.permission.intent!=InteractionIntent::Harmful &&
+         definition.permission.intent!=InteractionIntent::Neutral) ||
+        (definition.permission.relationSnapshot && *definition.permission.relationSnapshot!=Relation::Unknown &&
+         *definition.permission.relationSnapshot!=Relation::Friendly &&
+         *definition.permission.relationSnapshot!=Relation::Neutral &&
+         *definition.permission.relationSnapshot!=Relation::Hostile))
+        return fail(Error::Invalid,"invalid area definition/provider/limits");
+    if(definition.permission.requiredTag &&
+        std::find(definition.effect.tags.begin(),definition.effect.tags.end(),definition.permission.requiredTag)!=definition.effect.tags.end())
+        return fail(Error::Invalid,"area effect cannot grant its own required tag");
+    if(std::find(definition.effect.immuneEffects.begin(),definition.effect.immuneEffects.end(),definition.effect.type)!=definition.effect.immuneEffects.end())
+        return fail(Error::Invalid,"area effect cannot grant immunity to itself");
+    if(_areas.size()>=AreaLimit || _nextAreaId==UINT64_MAX)return fail(Error::Limit,"area identity/capacity exhausted");
+    auto binding=bindCombatant(*_world,source);if(!binding)return std::unexpected(binding.error());
+    auto current=resolve(*_world,*binding);if(!current)return std::unexpected(current.error());
+    if(!current->combat->life() || current->combat->life()->phase()!=LifePhase::Alive || hasOwnedStun(*binding))
+        return fail(Error::Invalid,"area source must be alive and able to act");
+    definition.permission.effectType=definition.effect.type;
+    AreaRecord area;area.id=_nextAreaId+1;area.source=source;area.sourceBinding=*binding;
+    area.definition=std::move(definition);area.provider=std::move(provider);
+    area.members.reserve(area.definition.maxMembers);
+    _areas.reserve(_areas.size()+1);
+    const auto id=area.id;_areas.push_back(std::move(area));_nextAreaId=id;return id;
+}
+Result<AreaSweep> CombatSystem::stopArea(std::uint64_t id) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"area removal during settlement/delivery");
+    auto area=std::find_if(_areas.begin(),_areas.end(),[&](const auto& current){return current.id==id;});
+    if(area==_areas.end())return fail(Error::Missing,"area identity missing");
+    AreaSweep sweep{id,_stats?_stats->tick():0,true,{}};sweep.targets.reserve(area->members.size());
+    for(std::size_t i=0;i<area->members.size();) {
+        const auto member=area->members[i];
+        auto removed=removeOwnedEffect(member.instance);
+        if(!removed && removed.error().code!=Error::Missing) {
+            sweep.targets.push_back({member.target,AreaTargetState::Failed,member.instance,InteractionDenial::None,removed.error()});
+            sweep.ended=false;++i;continue;
+        }
+        sweep.targets.push_back({member.target,AreaTargetState::Exited,member.instance});
+        area->members.erase(area->members.begin()+i);
+    }
+    if(sweep.ended)_areas.erase(area);
+    else area->last=sweep;
+    return sweep;
+}
+Result<AreaSweep> CombatSystem::updateArea(std::uint64_t id) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"area update during settlement/delivery");
+    auto area=std::find_if(_areas.begin(),_areas.end(),[&](const auto& current){return current.id==id;});
+    if(area==_areas.end())return fail(Error::Missing,"area identity missing");
+    auto source=resolve(*_world,area->sourceBinding);
+    if(!source || !source->combat->life() || source->combat->life()->phase()!=LifePhase::Alive ||
+       hasOwnedStun(area->sourceBinding))return stopArea(id);
+    Result<std::vector<AreaCandidate>> supplied;
+    _delivering=true;
+    try{supplied=area->provider();}
+    catch(...){_delivering=false;return fail(Error::Invalid,"area candidate provider threw");}
+    _delivering=false;
+    if(!supplied)return std::unexpected(supplied.error());
+    if(supplied->size()>area->definition.maxCandidates)return fail(Error::Limit,"area candidate limit; previous members retained");
+    std::sort(supplied->begin(),supplied->end(),[](const auto& a,const auto& b){
+        return std::tie(a.target.id,a.target.version)<std::tie(b.target.id,b.target.version);});
+    std::vector<AreaCandidate> candidates;candidates.reserve(supplied->size());
+    for(const auto& candidate:*supplied) {
+        if(!candidate.target.id)return fail(Error::Invalid,"area provider returned invalid Entity handle");
+        if(!candidates.empty() && candidates.back().target==candidate.target)candidates.back().selected|=candidate.selected;
+        else candidates.push_back(candidate);
+    }
+    struct Eligibility {AreaCandidate candidate;bool allowed=false;InteractionDenial denial=InteractionDenial::None;std::optional<Diagnostic> error;};
+    std::vector<Eligibility> checked;checked.reserve(candidates.size());
+    std::size_t eligible=0;
+    for(const auto& candidate:candidates) {
+        Eligibility result{candidate};
+        auto binding=bindCombatant(*_world,candidate.target);
+        if(!binding)result.error=binding.error();
+        else {
+            auto current=resolve(*_world,*binding);
+            if(!current)result.error=current.error();
+            else if(area->definition.requireTargetAlive &&
+                (!current->combat->life() || current->combat->life()->phase()!=LifePhase::Alive))
+                result.denial=InteractionDenial::Inactive;
+            else {
+                auto decision=authorizeInteraction(area->source,candidate.target,area->definition.permission,candidate.selected);
+                if(!decision)result.error=decision.error();
+                else {result.allowed=decision->decision.allowed;result.denial=decision->decision.denial;}
+            }
+        }
+        eligible+=result.allowed;checked.push_back(std::move(result));
+    }
+    if(eligible>area->definition.maxMembers)return fail(Error::Limit,"area member limit; previous members retained");
+    AreaSweep sweep{id,_stats->tick(),false,{}};sweep.targets.reserve(area->members.size()+checked.size());
+    for(std::size_t i=0;i<area->members.size();) {
+        const auto member=area->members[i];
+        auto candidate=std::find_if(checked.begin(),checked.end(),[&](const auto& item){return item.candidate.target==member.target;});
+        auto owned=std::find_if(_owned.begin(),_owned.end(),[&](const auto& item){return item.id==member.instance;});
+        if(candidate!=checked.end() && candidate->allowed && owned!=_owned.end() && liveOwned(*owned)) {
+            sweep.targets.push_back({member.target,AreaTargetState::Retained,member.instance});++i;continue;
+        }
+        auto removed=removeOwnedEffect(member.instance);
+        if(!removed && removed.error().code!=Error::Missing) {
+            sweep.targets.push_back({member.target,AreaTargetState::Failed,member.instance,InteractionDenial::None,removed.error()});
+            ++i;continue;
+        }
+        sweep.targets.push_back({member.target,AreaTargetState::Exited,member.instance,
+            candidate==checked.end()?InteractionDenial::None:candidate->denial});
+        area->members.erase(area->members.begin()+i);
+    }
+    for(const auto& candidate:checked) {
+        if(!candidate.allowed) {
+            sweep.targets.push_back({candidate.candidate.target,candidate.error?AreaTargetState::Failed:AreaTargetState::Rejected,
+                0,candidate.denial,candidate.error});continue;
+        }
+        if(std::any_of(area->members.begin(),area->members.end(),[&](const auto& member){return member.target==candidate.candidate.target;}))continue;
+        if(area->members.size()>=area->definition.maxMembers) {
+            sweep.targets.push_back({candidate.candidate.target,AreaTargetState::Failed,0,InteractionDenial::None,
+                Diagnostic{Error::Limit,"area member capacity after partial cleanup",{}}});continue;
+        }
+        auto applied=applyOwnedEffect(area->source,candidate.candidate.target,area->definition.effect,
+            area->definition.permission,candidate.candidate.selected);
+        if(!applied) {
+            sweep.targets.push_back({candidate.candidate.target,AreaTargetState::Failed,0,InteractionDenial::None,applied.error()});continue;
+        }
+        if(!applied->decision.allowed) {
+            sweep.targets.push_back({candidate.candidate.target,AreaTargetState::Rejected,0,applied->decision.denial});continue;
+        }
+        area->members.push_back({candidate.candidate.target,applied->effectInstance});
+        sweep.targets.push_back({candidate.candidate.target,AreaTargetState::Entered,applied->effectInstance});
+    }
+    area->last=sweep;return sweep;
+}
+Result<AreaSweep> CombatSystem::lastAreaSweep(std::uint64_t id) const {
+    auto area=std::find_if(_areas.begin(),_areas.end(),[&](const auto& current){return current.id==id;});
+    if(area==_areas.end())return fail(Error::Missing,"area identity missing");
+    return area->last;
+}
+Result<std::size_t> CombatSystem::areaMemberCount(std::uint64_t id) const {
+    auto area=std::find_if(_areas.begin(),_areas.end(),[&](const auto& current){return current.id==id;});
+    if(area==_areas.end())return fail(Error::Missing,"area identity missing");
+    return area->members.size();
 }
 Result<ActionResult> CombatSystem::act(Operation operation,ayt::entity::EntityHandle sourceHandle,ayt::entity::EntityHandle targetHandle,
     ayt::stats::Value amount,std::string_view recipe) {

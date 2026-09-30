@@ -6,7 +6,7 @@
 
 Core is C++23 and standard-library-only. It owns no Entity, World, Stats pool or game object. It provides owned provenance values, directional team relations, pure operation permission checks, stable selection of already-mapped collider candidates, and a single-owner hit ledger. The optional Stats target executes a real immutable CalculationPlan and commits one persistent pool in one caller-owned StatSet.
 
-Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission, N4 owned effect contributions and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Area membership, physics, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
+Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission, N4 owned effect contributions, N5 headless area membership and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Physics candidate providers, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
 
 ## Identity and ownership
 
@@ -108,12 +108,12 @@ Authored life mapping serializes the attribute name instead of a floating-point
 representation of its 64-bit ID. Other authored life fields serialize, while recipe books,
 actor profile registries and runtime phase/sequence are not checkpoints.
 
-## Generic changes, N3 permission, N4 ownership and planned area effects
+## Generic changes, N3 permission, N4 ownership and N5 area effects
 
 The post-implementation discussion is consolidated in engine plan section 16.
-N0–N4 have delivered numerical contracts, internal publication, simple numerical
-entries, a single-target interaction gate and Combat-owned effect instances.
-Area membership remains planned.
+N0–N5 have delivered numerical contracts, internal publication, simple numerical
+entries, a single-target interaction gate, Combat-owned effect instances and
+headless area membership.
 
 - Damage/heal resolve the profile's life pool. Generic operations select another
   stat and Increase/Decrease/Set intent. Persistent pools normally mutate current;
@@ -166,11 +166,21 @@ Area membership remains planned.
   mutation. Source cleanup can be requested explicitly; each target settles
   independently and errors do not claim cross-object atomicity.
 - An area action maintains stable per-target membership on the existing fixed Sim
-  boundary. By default a target must remain in range, permitted and selected;
-  loss of eligibility removes the instance's contribution. Retained members are
-  not reapplied each tick. Start with a headless candidate provider, then add
-  optional physics providers. Candidate limits must not manufacture exits.
-  Numerical timers remain Stats-owned; there is no additional numerical clock.
+  boundary. N5 startArea accepts a pure headless provider of the complete in-range
+  candidates and per-candidate selection. Combat sorts by Entity identity, merges
+  duplicate selection with OR, then rechecks current relation, tags, immunity,
+  target life and the authored selection condition. It applies one N4 instance on
+  entry, retains the same ID while eligible, and removes it on exit. Source death,
+  destruction or component replacement ends the area; stopArea and source
+  cancellation explicitly remove members. Target component replacement replaces
+  only that target's old instance. Candidate/member limits and provider failure
+  reject the entire sweep before membership changes, preserving old members.
+  Individual target numerical failures are returned in AreaSweep and do not stop
+  other targets. Active areas retain their last sweep; optional setOnAreaSweep
+  reports fixed-Sim sweeps, including automatic source-ended cleanup. A normal aura uses permanent effect duration; a finite owned
+  effect can expire and be reapplied if still eligible. The provider must not
+  silently truncate results or mutate the owner during enumeration. Physics
+  providers remain optional future adapters. Numerical timers remain Stats-owned.
 - Single-target composite effects need a preflight and common completion point for
   numeric and status contributions. Area targets default to independent settlement
   with per-target outcomes. Cross-object atomic mode must consume the validated

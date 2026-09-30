@@ -38,7 +38,14 @@ int main() {
         std::cout<<"permitted enemy mana change: "<<(drained.attribute?drained.attribute->actual:0)<<"\n";
         std::cout<<"owned tag active: "<<require(combat.hasTag(attacker,42))<<"\n";
         require(combat.removeOwnedEffect(owned.effectInstance));
+        require(combat.setRelation(1,2,Relation::Friendly));
+        AreaDefinition area;area.effect.type=8;area.effect.key=8;area.effect.tags={84};
+        area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly),0,0,true};
+        auto aura=require(combat.startArea(attacker,area,[&]()->Result<std::vector<AreaCandidate>>{
+            return std::vector<AreaCandidate>{{target,true}};}));
         world.fixedUpdate(1.0f/60); // Normal engine Sim drives notification delivery.
+        std::cout<<"selected friendly area tag: "<<require(combat.hasTag(target,84))<<"\n";
+        require(combat.stopArea(aura));
         world.shutdown();return 0;
     } catch(const std::exception& error){std::cerr<<error.what()<<"\n";world.shutdown();return 1;}
 }

@@ -255,6 +255,170 @@ TEST_CASE(status_only_effect_and_component_replacement_release_owned_facts) {
     f.world.fixedUpdate(.016f);
     CHECK_TRUE(f.combat->ownedEffectCount()==0 && f.stats(f.target).read(statId("power"))->effective==20);
 }
+TEST_CASE(area_selected_friendly_members_enter_hold_and_exit_without_duplicate_effects) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    std::vector<AreaCandidate> candidates{{f.target,false}};
+    AreaDefinition area;area.effect.type=55;area.effect.key=77;
+    area.effect.modifiers={{.rule=1,.target=statId("power"),.zone=1,.value=5000}};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly),0,0,true};
+    auto id=f.combat->startArea(f.source,area,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;}).value();
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+    f.actor().immuneEffects={55};candidates={{f.target,true}};
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && f.combat->lastAreaSweep(id)->targets[0].denial==InteractionDenial::Immune);
+    f.actor().immuneEffects.clear();
+    candidates={{f.target,false},{f.target,true}};
+    f.world.fixedUpdate(.016f);
+    auto entered=f.combat->lastAreaSweep(id).value();
+    CHECK_TRUE(entered.targets.size()==1 && entered.targets[0].state==AreaTargetState::Entered);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->ownedEffectCount()==1);
+    CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==30);
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->lastAreaSweep(id)->targets[0].state==AreaTargetState::Retained);
+    CHECK_TRUE(f.combat->ownedEffectCount()==1 && f.stats(f.target).read(statId("power"))->effective==30);
+    f.world.updatePresentation(.1f,1);candidates={{f.target,false}};
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+    candidates={{f.target,true}};f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Hostile).has_value());f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+    CHECK_TRUE(f.combat->stopArea(id)->ended && f.combat->ownedEffectCount()==0);
+}
+TEST_CASE(area_dynamic_tag_and_target_death_recheck_current_eligibility) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    std::vector<AreaCandidate> candidates{{f.target,true}};
+    AreaDefinition area;area.effect.type=55;area.effect.key=55;area.effect.tags={8};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly),0,7,true};
+    auto feedback=area;feedback.effect.tags={7};
+    CHECK_TRUE(f.combat->startArea(f.source,feedback,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;}).error().code==ayt::combat::Error::Invalid);
+    feedback=area;feedback.effect.immuneEffects={55};
+    CHECK_TRUE(f.combat->startArea(f.source,feedback,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;}).error().code==ayt::combat::Error::Invalid);
+    auto id=f.combat->startArea(f.source,area,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;}).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.combat->areaMemberCount(id).value()==0);
+    EffectDefinition qualifying;qualifying.type=44;qualifying.key=44;qualifying.tags={7};
+    InteractionPolicy friendly{InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    auto tag=f.combat->applyOwnedEffect(f.source,f.target,qualifying,friendly).value();
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->hasTag(f.target,8).value());
+    CHECK_TRUE(f.combat->removeOwnedEffect(tag.effectInstance).has_value());
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && !f.combat->hasTag(f.target,8).value());
+    f.actor().tags={7};f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    CHECK_TRUE(f.combat->attributes().set(f.target,"vitality",0).has_value());
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && !f.combat->hasTag(f.target,8).value());
+}
+TEST_CASE(area_candidate_limit_and_provider_failure_preserve_previous_members) {
+    GameplayFixture f;auto other=f.additionalActor(20);
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    std::vector<AreaCandidate> candidates{{f.target,true}};bool throws=false;
+    AreaDefinition area;area.effect.type=55;area.effect.key=55;area.effect.tags={8};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    area.maxCandidates=1;area.maxMembers=1;
+    auto id=f.combat->startArea(f.source,area,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{
+        if(throws)throw std::runtime_error("provider failure");return candidates;}).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    candidates={{other,true},{f.target,true}};
+    CHECK_TRUE(f.combat->updateArea(id).error().code==ayt::combat::Error::Limit);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->hasTag(f.target,8).value());
+    throws=true;
+    CHECK_TRUE(f.combat->updateArea(id).error().code==ayt::combat::Error::Invalid);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->hasTag(f.target,8).value());
+    throws=false;candidates.clear();f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && !f.combat->hasTag(f.target,8).value());
+}
+TEST_CASE(area_member_limit_and_stable_order_do_not_truncate_previous_members) {
+    GameplayFixture f;auto other=f.additionalActor(20);
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    std::vector<AreaCandidate> candidates{{f.target,true}};
+    AreaDefinition area;area.effect.type=55;area.effect.key=55;area.effect.tags={8};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    area.maxMembers=1;
+    auto id=f.combat->startArea(f.source,area,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;}).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    candidates={{other,true},{f.target,true}};
+    CHECK_TRUE(f.combat->updateArea(id).error().code==ayt::combat::Error::Limit);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->hasTag(f.target,8).value());
+    CHECK_TRUE(!f.combat->hasTag(other,8).value());
+    candidates={{other,true}};
+    auto sweep=f.combat->updateArea(id).value();
+    CHECK_TRUE(sweep.targets.size()==2 && sweep.targets[0].state==AreaTargetState::Exited &&
+        sweep.targets[1].state==AreaTargetState::Entered);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->hasTag(other,8).value());
+}
+TEST_CASE(area_reports_each_target_when_one_numeric_schema_rejects_the_effect) {
+    GameplayFixture f;auto other=f.additionalActor(20);
+    CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    auto limitedSchema=Schema::compile({{.name="vitality",.shape=Shape::Pool,.current=100,.capacity=100}}).value();
+    CHECK_TRUE(f.stats(other).configure(limitedSchema).has_value());
+    std::vector<AreaCandidate> candidates{{other,true},{f.target,true}};
+    AreaDefinition area;area.effect.type=55;area.effect.key=55;
+    area.effect.modifiers={{.rule=1,.target=statId("power"),.zone=1,.value=5000}};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    auto id=f.combat->startArea(f.source,area,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;}).value();
+    auto sweep=f.combat->updateArea(id).value();
+    CHECK_TRUE(sweep.targets.size()==2 && sweep.targets[0].target==f.target &&
+        sweep.targets[0].state==AreaTargetState::Entered && sweep.targets[1].target==other &&
+        sweep.targets[1].state==AreaTargetState::Failed && sweep.targets[1].error.has_value());
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.stats(f.target).read(statId("power"))->effective==30);
+    CHECK_TRUE(f.stats(other).read(statId("vitality"))->current==100);
+    CHECK_TRUE(f.combat->stopArea(id)->ended && f.stats(f.target).read(statId("power"))->effective==20);
+}
+TEST_CASE(area_source_death_or_cancellation_removes_only_its_members) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    int ended=0;f.combat->setOnAreaSweep([&](const AreaSweep& sweep){if(sweep.ended)++ended;});
+    std::vector<AreaCandidate> candidates{{f.target,true}};
+    AreaDefinition area;area.effect.type=55;area.effect.key=55;
+    area.effect.modifiers={{.rule=1,.target=statId("power"),.zone=1,.value=5000}};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    auto provider=[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;};
+    auto id=f.combat->startArea(f.source,area,provider).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==30);
+    CHECK_TRUE(f.combat->stopArea(id)->ended && f.stats(f.target).read(statId("power"))->effective==20);
+    id=f.combat->startArea(f.source,area,provider).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.combat->removeSourceEffects(f.source).value()==1);
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).error().code==ayt::combat::Error::Missing &&
+        f.stats(f.target).read(statId("power"))->effective==20);
+    id=f.combat->startArea(f.source,area,provider).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    CHECK_TRUE(f.combat->attributes().set(f.source,"vitality",0).has_value());
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).error().code==ayt::combat::Error::Missing);
+    CHECK_TRUE(ended==1 && f.combat->ownedEffectCount()==0 && f.stats(f.target).read(statId("power"))->effective==20);
+}
+TEST_CASE(area_source_destruction_and_target_replacement_clean_members) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    std::vector<AreaCandidate> candidates{{f.target,true}};
+    AreaDefinition area;area.effect.type=55;area.effect.key=55;area.effect.tags={8};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    auto provider=[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;};
+    auto id=f.combat->startArea(f.source,area,provider).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    auto* target=f.world.getEntityByHandle(f.target);
+    target->removeComponent<CombatComponent>();target->addComponent<CombatComponent>();
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->hasTag(f.target,8).value());
+    f.world.destroyEntity(f.world.getEntityByHandle(f.source));f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).error().code==ayt::combat::Error::Missing);
+    CHECK_TRUE(!f.combat->hasTag(f.target,8).value() && f.combat->ownedEffectCount()==0);
+}
+TEST_CASE(area_target_destruction_does_not_keep_a_stale_member) {
+    GameplayFixture f;CHECK_TRUE(f.combat->setRelation(10,20,Relation::Friendly).has_value());
+    std::vector<AreaCandidate> candidates{{f.target,true}};
+    AreaDefinition area;area.effect.type=55;area.effect.key=55;area.effect.tags={8};
+    area.permission={InteractionIntent::Beneficial,mask(AllowedTarget::Friendly)};
+    auto id=f.combat->startArea(f.source,area,[&]()->ayt::combat::Result<std::vector<AreaCandidate>>{return candidates;}).value();
+    f.world.fixedUpdate(.016f);CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);
+    f.world.destroyEntity(f.world.getEntityByHandle(f.target));
+    f.world.fixedUpdate(.016f);
+    CHECK_TRUE(f.combat->areaMemberCount(id).value()==0 && f.combat->ownedEffectCount()==0);
+    CHECK_TRUE(f.combat->lastAreaSweep(id)->targets.back().state==AreaTargetState::Failed);
+}
 TEST_CASE(invalid_recipe_shape_input_and_negative_output_never_mutate) {
     GameplayFixture f;const auto version=f.stats(f.target).version();
     auto wrong=GameplayFixture::scaled("mana_only",statId("mana"),AttributeOp::Decrease,10000);
