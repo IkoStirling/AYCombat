@@ -333,13 +333,18 @@ Result<InteractionResult> CombatSystem::authorizeInteraction(ayt::entity::Entity
     ayt::entity::EntityHandle targetHandle,InteractionPolicy policy,bool selected) {
     if(!_world || !_stats)return fail(Error::Missing,"combat is not installed");
     auto source=bindCombatant(*_world,sourceHandle);if(!source)return std::unexpected(source.error());
-    auto target=bindCombatant(*_world,targetHandle);if(!target)return std::unexpected(target.error());
     auto actor=resolve(*_world,*source);if(!actor)return std::unexpected(actor.error());
-    auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
     if(hasOwnedStun(*source))return fail(Error::Invalid,"source is stunned");
     SourceContext provenance;
     provenance.instigator=source->ref;provenance.directSource=source->ref;
     provenance.team=actor->combat->team;provenance.attribution=source->ref.object;
+    return authorizeInteractionFromContext(provenance,targetHandle,policy,selected);
+}
+Result<InteractionResult> CombatSystem::authorizeInteractionFromContext(const SourceContext& provenance,
+    ayt::entity::EntityHandle targetHandle,InteractionPolicy policy,bool selected) {
+    if(!_world || !_stats)return fail(Error::Missing,"combat is not installed");
+    auto target=bindCombatant(*_world,targetHandle);if(!target)return std::unexpected(target.error());
+    auto current=resolve(*_world,*target);if(!current)return std::unexpected(current.error());
     CombatantView view{target->ref,current->combat->team,current->combat->capabilities,true};
     std::vector<std::uint64_t> tags=current->combat->tags,immunities=current->combat->immuneEffects;
     for(const auto& owned:_owned)if(owned.target.ref==target->ref &&
@@ -361,6 +366,28 @@ Result<InteractionResult> CombatSystem::interactAttribute(ayt::entity::EntityHan
     auto interaction=authorizeInteraction(source,target,policy,selected);
     if(!interaction || !interaction->decision.allowed)return interaction;
     auto settled=_stats->change(target,stat,operation,amount,recipe,source);
+    if(!settled)return std::unexpected(numericDiagnostic(settled.error()));
+    const auto& change=settled->changes.front();
+    interaction->attribute=AttributeResult{change.before,change.after,change.actual,change.excess};
+    return interaction;
+}
+Result<InteractionResult> CombatSystem::interactAttributeFromContext(const SourceContext& provenance,
+    std::optional<ayt::entity::EntityHandle> liveSource,ayt::entity::EntityHandle target,
+    std::string_view stat,ayt::stats::AttributeOp operation,ayt::stats::Value amount,
+    InteractionPolicy policy,bool selected,std::string_view recipe) {
+    if(_settling || _delivering)return fail(Error::Reentrant,"interaction during settlement/delivery");
+    if(!_world || !_stats)return fail(Error::Missing,"combat is not installed");
+    _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
+    if(liveSource) {
+        auto source=bindCombatant(*_world,*liveSource);
+        if(!source)return std::unexpected(source.error());
+        if(!provenance.instigator || *provenance.instigator!=source->ref)
+            return fail(Error::Stale,"live source does not match captured instigator");
+        if(hasOwnedStun(*source))return fail(Error::Invalid,"source is stunned");
+    }
+    auto interaction=authorizeInteractionFromContext(provenance,target,policy,selected);
+    if(!interaction || !interaction->decision.allowed)return interaction;
+    auto settled=_stats->change(target,stat,operation,amount,recipe,liveSource);
     if(!settled)return std::unexpected(numericDiagnostic(settled.error()));
     const auto& change=settled->changes.front();
     interaction->attribute=AttributeResult{change.before,change.after,change.actual,change.excess};

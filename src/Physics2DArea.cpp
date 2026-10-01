@@ -44,12 +44,16 @@ Result<AreaCandidateProvider> makeAreaCandidateProvider2D(ayt::entity::World& wo
         if(backend->overlapSphereSync(center,query.radius,bodies,query.layerMask)!=
            ayt::physics::PhysResult::Ok)
             return invalid<std::vector<AreaCandidate>>(Error::Invalid,"2D area overlap query failed");
+        const std::set<ayt::physics::BodyHandle> overlapping(bodies.begin(),bodies.end());
         std::map<ayt::physics::BodyHandle,ayt::entity::EntityHandle> mapped;
         for(auto* candidate:world.getAllEntities()) {
             auto* rigid=candidate->getComponent<ayt::entity::RigidBodyComponent>();
             if(!rigid || rigid->getPhysicsDimension()!=
                ayt::entity::RigidBodyComponent::PhysicsDimension::TwoD ||
-               rigid->getBodyHandle()==ayt::physics::InvalidBodyHandle)continue;
+               rigid->getBodyHandle()==ayt::physics::InvalidBodyHandle ||
+               !overlapping.contains(rigid->getBodyHandle()) ||
+               !candidate->getComponent<ayt::stats::StatsComponent>() ||
+               !candidate->getComponent<CombatComponent>())continue;
             const auto handle=world.getEntityHandle(candidate->getId());
             if(!mapped.emplace(rigid->getBodyHandle(),handle).second)
                 return invalid<std::vector<AreaCandidate>>(

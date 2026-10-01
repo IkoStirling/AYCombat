@@ -16,6 +16,7 @@ struct AreaQuery2D {
 using AreaSelection2D=std::function<bool(ayt::entity::EntityHandle)>;
 Result<void> validateAreaQuery2D(const AreaQuery2D& query);
 /// Build one complete Box2D candidate provider for CombatSystem::startArea.
+/// Only overlapping entities with Stats and Combat components count as candidates.
 /// World and PhysicsManager must outlive the area; the source needs a Transform.
 Result<AreaCandidateProvider> makeAreaCandidateProvider2D(ayt::entity::World& world,
     ayt::physics::PhysicsManager& physics,ayt::entity::EntityHandle source,

@@ -151,6 +151,12 @@ public:
     Result<InteractionResult> interactAttribute(ayt::entity::EntityHandle source,ayt::entity::EntityHandle target,
         std::string_view stat,ayt::stats::AttributeOp operation,ayt::stats::Value amount,
         InteractionPolicy policy,bool selected=false,std::string_view recipe={});
+    /// Advanced derived-hit operation: permission uses captured provenance while optional liveSource
+    /// supplies current Stats recipe inputs. A missing liveSource permits snapshot-only recipes.
+    Result<InteractionResult> interactAttributeFromContext(const SourceContext& provenance,
+        std::optional<ayt::entity::EntityHandle> liveSource,ayt::entity::EntityHandle target,
+        std::string_view stat,ayt::stats::AttributeOp operation,ayt::stats::Value amount,
+        InteractionPolicy policy,bool selected=false,std::string_view recipe={});
     /// Low-level Stats numerical effect after permission; the caller owns its Stats ID/lifecycle.
     Result<InteractionResult> applyEffect(ayt::entity::EntityHandle source,ayt::entity::EntityHandle target,
         ayt::stats::Effect effect,ayt::stats::EffectPolicy stackPolicy,InteractionPolicy policy,bool selected=false);
@@ -244,6 +250,8 @@ private:
     Result<ActionResult> act(Operation,ayt::entity::EntityHandle,ayt::entity::EntityHandle,ayt::stats::Value,std::string_view);
     Result<InteractionResult> authorizeInteraction(ayt::entity::EntityHandle,ayt::entity::EntityHandle,
         InteractionPolicy,bool);
+    Result<InteractionResult> authorizeInteractionFromContext(const SourceContext&,
+        ayt::entity::EntityHandle,InteractionPolicy,bool);
     bool liveOwned(const OwnedEffect&) const;
     bool hasOwnedTag(const EntityBinding&,std::uint64_t) const;
     bool hasOwnedImmunity(const EntityBinding&,std::uint64_t) const;
