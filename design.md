@@ -48,6 +48,8 @@ CombatSystem submits synchronously on a single owner; its Sim hook does not sche
 
 Life/immuneTypes/attacks/outcomes are runtime state; serializable team/capability/fact and life-mapping fields do not constitute a Combat checkpoint. Numerical writes use controlled Stats entries; consumer replay and fixed Sim scheduling remain owner responsibilities. General allocator failure and violation of pure-extension/owner contracts are outside the retryable transaction guarantee.
 
+Scene and Actor expansion can finish before Entity::onStart. The first `bindCombatant` synchronizes authored Stats definitions and then initializes an absent or stale life tracker from that state. This operation is idempotent when the authored definition is unchanged and preserves current Stats values/effects. Invalid authored definitions fail the binding before gameplay mutation.
+
 ## Gameplay facade and automatic integration (N0–N2)
 
 The default installCombat(World) entry hides settlement machinery and maintains

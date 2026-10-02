@@ -763,6 +763,13 @@ Result<EntityBinding> bindCombatant(ayt::entity::World& world, ayt::entity::Enti
     if (!system || !entity) return fail(Error::Stale, "World/Entity is unavailable");
     auto* stats = entity->getComponent<ayt::stats::StatsComponent>(); auto* combat = entity->getComponent<CombatComponent>();
     if (!stats || !combat) return fail(Error::Missing, "Entity requires Stats and Combat components");
+    // Scene and Actor expansion deserialize authored fields without invoking Entity::onStart.
+    // Make the gameplay binding usable immediately after composition, independent of
+    // component order and without a caller-managed synchronization step.
+    if (auto ready=stats->ensureReady();!ready)
+        return std::unexpected(Diagnostic{Error::NumericFailure,ready.error().message,ready.error().path});
+    if (!combat->life() || !combat->lifeMatches(stats->generation()))
+        combat->onStart();
     EntityBinding binding{{system->worldToken(), handle.id, std::uint64_t(handle.version) + 1}, stats->generation(), combat->generation()};
     auto current = resolve(world, binding); if (!current) return std::unexpected(current.error()); return binding;
 }

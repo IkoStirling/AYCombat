@@ -35,12 +35,14 @@ TEST_CASE(authored_life_mapping_roundtrips_and_initializes_without_business_rebi
     auto schema=ayt::stats::Schema::compile({{.name="life",.shape=ayt::stats::Shape::Pool,.current=0,.capacity=100}}).value();
     CHECK_TRUE(combat.configureActor(handle,{schema,{ayt::stats::statId("life"),LifePhase::Downed,true},9}).has_value());
     const auto file=ayt::test::testTmpPath("combat-authored.ayscene");CHECK_TRUE(ayt::entity::saveScene(world,file));world.destroyEntity(actor);
-    CHECK_TRUE(ayt::entity::loadScene(world,file));auto* loaded=world.findEntity("SavedCombatActor");CHECK_NOT_NULL(loaded);loaded->onStart();
+    CHECK_TRUE(ayt::entity::loadScene(world,file));auto* loaded=world.findEntity("SavedCombatActor");CHECK_NOT_NULL(loaded);
+    auto current=world.getEntityHandle(loaded->getId());
+    CHECK_TRUE(bindCombatant(world,current).has_value());
     auto* component=loaded->getComponent<CombatComponent>();CHECK_NOT_NULL(component);
     if(!component || !component->life())throw std::runtime_error("serialized life mapping did not initialize");
     CHECK_TRUE(component->lifeResourceName=="life" && component->lifeResource==ayt::stats::statId("life"));
     CHECK_TRUE(component->life()->phase()==LifePhase::Downed && component->team==9);
-    auto current=world.getEntityHandle(loaded->getId());CHECK_TRUE(combat.increase(current,"life",10).has_value());
+    CHECK_TRUE(combat.increase(current,"life",10).has_value());
     CHECK_TRUE(component->life()->phase()==LifePhase::Alive);world.shutdown();
 }
 TEST_SUITE_END
