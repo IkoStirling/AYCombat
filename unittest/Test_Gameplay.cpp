@@ -51,6 +51,30 @@ struct GameplayFixture {
 };
 }
 TEST_SUITE(CombatGameplayTests)
+TEST_CASE(exact_life_restoration_policy_is_authored_and_removal_is_atomic) {
+    GameplayFixture f(true);
+    CHECK_TRUE(f.combat->damage(f.source,f.target,20).has_value());
+    CHECK_INT_EQ(f.hp(),80);
+    EffectDefinition definition;
+    definition.type=901;definition.key=901;
+    definition.modifiers={{.rule=1,.target=statId("capacity"),.zone=1,.value=-99}};
+    definition.lifeRestore=LifeRestoreMode::RestoreSnapshot;
+    InteractionPolicy policy{InteractionIntent::Harmful,mask(AllowedTarget::Hostile)};
+    auto applied=f.combat->applyOwnedEffect(f.source,f.target,definition,policy).value();
+    CHECK_INT_EQ(f.hp(),1);
+    CHECK_FALSE(f.combat->applyOwnedEffect(f.source,f.target,definition,policy).has_value());
+    CHECK_TRUE(f.combat->damage(f.source,f.target,1).has_value());
+    CHECK_INT_EQ(f.hp(),0);
+    CHECK_TRUE(f.combat->removeOwnedEffect(applied.effectInstance).has_value());
+    CHECK_INT_EQ(f.hp(),80);
+    CHECK_INT_EQ(f.stats(f.target).read(statId("vitality"))->capacity,100);
+    definition.lifeRestore=LifeRestoreMode::RestoreNetDelta;
+    auto second=f.combat->applyOwnedEffect(f.source,f.target,definition,policy).value();
+    CHECK_INT_EQ(f.hp(),1);
+    CHECK_TRUE(f.combat->damage(f.source,f.target,1).has_value());
+    CHECK_TRUE(f.combat->removeOwnedEffect(second.effectInstance).has_value());
+    CHECK_INT_EQ(f.hp(),79);
+}
 TEST_CASE(simple_damage_heal_and_fixed_step_automatic_delivery) {
     GameplayFixture f;int outcomes=0,deaths=0;std::vector<Value> deliveredRemaining;
     f.combat->setOnOutcome([&](const ActionResult& result){++outcomes;deliveredRemaining.push_back(result.remaining);});

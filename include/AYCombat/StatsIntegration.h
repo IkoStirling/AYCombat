@@ -68,6 +68,8 @@ struct CombatOutcome {
     std::optional<LifeTransition> life;
     /// Entity adapter captures this pool value at action completion, including rejected/blocked work.
     ayt::stats::Value remaining=0;
+    /// Physical hit subdivision retained for result consumers and replay diagnostics.
+    std::uint32_t part=0,segment=0;
 };
 struct CombatPreview { TargetDecision decision; ayt::stats::Value calculated = 0; RuleDecision rule; };
 

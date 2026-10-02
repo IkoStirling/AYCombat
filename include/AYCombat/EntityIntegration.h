@@ -38,12 +38,15 @@ struct InteractionResult {
 };
 /// Reusable authored contribution. Duration is measured on the Stats Sim clock;
 /// UINT64_MAX means permanent. Modifier identities are allocated by Combat.
+enum class LifeRestoreMode { KeepCurrent, RestoreSnapshot, RestoreNetDelta };
 struct EffectDefinition {
     std::uint64_t type=0,key=0,durationTicks=UINT64_MAX;
     std::uint32_t maxStacks=UINT32_MAX;
     std::vector<ayt::stats::Modifier> modifiers;
     std::vector<std::uint64_t> tags,immuneEffects,immuneDamageTypes;
     bool stunned=false;
+    /// Optional exact life-current rule when a capacity-changing effect ends.
+    LifeRestoreMode lifeRestore=LifeRestoreMode::KeepCurrent;
 };
 /// Entity identity plus both component incarnations. A replacement invalidates queued work.
 struct EntityBinding {
@@ -222,6 +225,8 @@ private:
         EntityBinding source,target;
         SourceContext provenance;
         EffectDefinition definition;
+        struct LifeSnapshot { ayt::stats::StatId resource=0;ayt::stats::Value before=0,after=0; };
+        std::optional<LifeSnapshot> lifeSnapshot;
     };
     static constexpr std::size_t OwnedEffectLimit = 65536;
     std::vector<OwnedEffect> _owned;

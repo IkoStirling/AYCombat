@@ -34,6 +34,10 @@ After a successful Stats commit there are no callbacks or new allocations: the v
 
 CombatOutcome Applied confirms a hit: successful numerical settlement, including zero, or a block without numerical mutation. OutcomeKind distinguishes Rejected/Blocked/Zero/Damage/Heal. Rejected preserves the base target denial or matching rule ID with no reservation/pool change. Errors are distinct. Actual delta is signed using the Stats convention, not the requested/calculated amount. Outcome identity is `(attack.domain,attack.id,request)`.
 
+`CombatOutcome` also retains the submitted part and segment for result inspection. HitScope::Part keys deduplication by the part supplied in `HitRequest`; a Box2D contact adapter may derive that part from a generation-checked collider handle. Body-only overlaps still have no exact part identity.
+
+`EffectDefinition::lifeRestore` makes temporary mapped-life-capacity restoration an author choice. KeepCurrent follows ordinary Stats capacity policy. RestoreSnapshot publishes the pre-effect current when the effect is removed. RestoreNetDelta publishes pre-effect current plus the net change between current immediately after application and immediately before removal, clamped to the final capacity. Combat retains the before/after snapshot and keeps the numerical effect permanent internally until its own expiry/removal so Stats and Combat cannot expose a transient un-restored value. Stats atomically removes the modifier and sets current; failure leaves both untouched. Exact restoration effects cannot overlap on one target or be replaced while active. This mode does not count damage/healing discarded by the temporary capacity boundary; a content rule needing cumulative attempted change requires an explicit event ledger.
+
 preview checks supplied views/relations/rules and performs pure computation only for a passing request. It does not validate a live attack, resource availability or a future target version, and does not alter ledger/state/life. Base permission and the additional rule decision are separate fields.
 
 ## Rules, life and result delivery

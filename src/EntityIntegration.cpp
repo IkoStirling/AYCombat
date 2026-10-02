@@ -26,6 +26,8 @@ Diagnostic numericDiagnostic(const ayt::stats::Diagnostic& error) {
 }
 bool validDefinition(const EffectDefinition& definition) {
     if(!definition.type || !definition.key || !definition.durationTicks || !definition.maxStacks ||
+       definition.lifeRestore>LifeRestoreMode::RestoreNetDelta ||
+       (definition.lifeRestore!=LifeRestoreMode::KeepCurrent && definition.modifiers.empty()) ||
        (definition.modifiers.empty() && definition.tags.empty() && definition.immuneEffects.empty() &&
         definition.immuneDamageTypes.empty() && !definition.stunned))return false;
     return std::none_of(definition.tags.begin(),definition.tags.end(),[](auto id){return !id;}) &&
@@ -474,6 +476,10 @@ Result<InteractionResult> CombatSystem::applyOwnedEffect(ayt::entity::EntityHand
     if(!interaction || !interaction->decision.allowed)return interaction;
     auto sourceBinding=bindCombatant(*_world,source);if(!sourceBinding)return std::unexpected(sourceBinding.error());
     auto targetBinding=bindCombatant(*_world,target);if(!targetBinding)return std::unexpected(targetBinding.error());
+    if(definition.lifeRestore!=LifeRestoreMode::KeepCurrent &&
+       std::any_of(_owned.begin(),_owned.end(),[&](const auto& active){
+           return active.lifeSnapshot && active.target.ref==targetBinding->ref && liveOwned(active);
+       }))return fail(Error::Invalid,"overlapping exact life restoration is unsupported");
     if(std::any_of(_owned.begin(),_owned.end(),[&](const auto& owned){return owned.target.ref==targetBinding->ref &&
         owned.definition.key==definition.key && owned.definition.maxStacks!=definition.maxStacks && liveOwned(owned);}))
         return fail(Error::Invalid,"owned effect stack policy differs from active group");
@@ -487,9 +493,24 @@ Result<InteractionResult> CombatSystem::applyOwnedEffect(ayt::entity::EntityHand
     _owned.reserve(_owned.size()+1); // Any allocation happens before the Stats publication.
     if(!owned.definition.modifiers.empty()) {
         auto current=resolve(*_world,*targetBinding);if(!current)return std::unexpected(current.error());
-        ayt::stats::Effect numerical{id,owned.definition.key,*expiry,owned.definition.maxStacks,owned.definition.modifiers};
+        if(owned.definition.lifeRestore!=LifeRestoreMode::KeepCurrent) {
+            const auto* life=current->combat->life();
+            if(!life)return fail(Error::Invalid,"exact life restoration needs mapped life resource");
+            const auto resource=life->policy().resource;
+            auto before=current->stats->read(resource);
+            if(!before)return std::unexpected(numericDiagnostic(before.error()));
+            owned.lifeSnapshot=OwnedEffect::LifeSnapshot{resource,before->current,0};
+        }
+        const auto numericalExpiry=owned.lifeSnapshot?UINT64_MAX:*expiry;
+        ayt::stats::Effect numerical{id,owned.definition.key,numericalExpiry,
+            owned.definition.maxStacks,owned.definition.modifiers};
         auto applied=current->stats->applyEffect(std::move(numerical),ayt::stats::EffectPolicy::Independent,_stats->tick());
         if(!applied)return std::unexpected(numericDiagnostic(applied.error()));
+        if(owned.lifeSnapshot) {
+            auto after=current->stats->read(owned.lifeSnapshot->resource);
+            if(!after)return std::unexpected(numericDiagnostic(after.error()));
+            owned.lifeSnapshot->after=after->current;
+        }
     }
     _nextOwnedId=id;
     interaction->effectInstance=id;interaction->source.effect=id;
@@ -506,7 +527,8 @@ Result<void> CombatSystem::refreshOwnedEffect(std::uint64_t instance,std::uint64
     _settling=true;struct Guard{bool& busy;~Guard(){busy=false;}} guard{_settling};
     if(!it->definition.modifiers.empty()) {
         auto current=resolve(*_world,it->target);if(!current)return std::unexpected(current.error());
-        ayt::stats::Effect numerical{it->id,it->definition.key,*expiry,it->definition.maxStacks,it->definition.modifiers};
+        ayt::stats::Effect numerical{it->id,it->definition.key,
+            it->lifeSnapshot?UINT64_MAX:*expiry,it->definition.maxStacks,it->definition.modifiers};
         auto updated=current->stats->updateEffect(std::move(numerical),_stats->tick());
         if(!updated)return std::unexpected(numericDiagnostic(updated.error()));
     }
@@ -518,8 +540,11 @@ Result<void> CombatSystem::replaceOwnedEffect(std::uint64_t instance,EffectDefin
     if(it==_owned.end())return fail(Error::Missing,"owned effect instance missing");
     if(!liveOwned(*it))return fail(Error::Stale,"owned effect is no longer live");
     if(!resolve(*_world,it->source))return fail(Error::Stale,"owned effect source changed");
+    if(it->lifeSnapshot)return fail(Error::Invalid,"exact life restoration effect cannot be replaced");
     if(!validDefinition(definition) || definition.key!=it->definition.key || definition.type!=it->definition.type ||
-        definition.maxStacks!=it->definition.maxStacks)return fail(Error::Invalid,"replacement changed effect group identity");
+        definition.maxStacks!=it->definition.maxStacks ||
+        definition.lifeRestore!=it->definition.lifeRestore)
+        return fail(Error::Invalid,"replacement changed effect group identity");
     if(_nextModifierHandle>UINT64_MAX-definition.modifiers.size())return fail(Error::Limit,"modifier identity exhausted");
     auto expiry=expiresAt(_stats->tick(),definition.durationTicks);if(!expiry)return std::unexpected(expiry.error());
     for(auto& modifier:definition.modifiers)modifier.handle=++_nextModifierHandle;
@@ -528,7 +553,8 @@ Result<void> CombatSystem::replaceOwnedEffect(std::uint64_t instance,EffectDefin
     const bool before=!it->definition.modifiers.empty(),after=!definition.modifiers.empty();
     ayt::stats::Result<void> changed;
     if(after) {
-        ayt::stats::Effect numerical{it->id,definition.key,*expiry,definition.maxStacks,definition.modifiers};
+        ayt::stats::Effect numerical{it->id,definition.key,
+            it->lifeSnapshot?UINT64_MAX:*expiry,definition.maxStacks,definition.modifiers};
         changed=before?current->stats->updateEffect(std::move(numerical),_stats->tick()):
             current->stats->applyEffect(std::move(numerical),ayt::stats::EffectPolicy::Independent,_stats->tick());
     } else if(before)changed=current->stats->removeEffect(it->id);
@@ -545,7 +571,20 @@ Result<void> CombatSystem::removeOwnedAt(std::size_t index) {
         if(stats && stats->generation()==owned.target.statsGeneration && stats->authority() && stats->state()) {
             const auto modifiers=stats->state()->modifiers();
             if(std::any_of(modifiers.begin(),modifiers.end(),[&](const auto& modifier){return modifier.effect==owned.id;})) {
-                auto removed=stats->removeEffect(owned.id);
+                ayt::stats::Result<void> removed;
+                if(owned.lifeSnapshot) {
+                    const auto& snapshot=*owned.lifeSnapshot;
+                    ayt::stats::Value desired=snapshot.before;
+                    if(owned.definition.lifeRestore==LifeRestoreMode::RestoreNetDelta) {
+                        auto current=stats->read(snapshot.resource);
+                        if(!current)return std::unexpected(numericDiagnostic(current.error()));
+                        auto adjusted=ayt::stats::add(snapshot.before,
+                            current->current-snapshot.after);
+                        if(!adjusted)return std::unexpected(numericDiagnostic(adjusted.error()));
+                        desired=std::max<ayt::stats::Value>(0,*adjusted);
+                    }
+                    removed=stats->removeEffectRestoringCurrent(owned.id,snapshot.resource,desired);
+                } else removed=stats->removeEffect(owned.id);
                 if(!removed)return std::unexpected(numericDiagnostic(removed.error()));
             }
         }

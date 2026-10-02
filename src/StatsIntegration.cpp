@@ -94,6 +94,8 @@ Result<CombatOutcome> settle(const SettlementRequest& request, const RelationTab
     if (!decision) return std::unexpected(decision.error());
     CombatOutcome outcome{request.hit.attack, request.hit.request, request.hit.target, request.source,
                           request.filter.operation, OutcomeState::Rejected, *decision};
+    outcome.part=request.hit.part;
+    outcome.segment=request.hit.segment;
     if (!decision->allowed) return outcome;
     auto rule = ruleDecision(request, options);
     if (!rule) return std::unexpected(rule.error());
