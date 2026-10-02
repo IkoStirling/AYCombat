@@ -1,6 +1,6 @@
 # AYCombat
 
-Independent local Git repository on `codex/aycombat-core`, with no remote. Provides relationships, target permission, provenance, stable candidate selection, hit reservation/replay protection, ordered rule predicates, real single-resource Stats settlement, explicit life policy and an optional World/Entity adapter.
+Independent Git repository on `main`, registered as an AliyatEngine submodule. Provides relationships, target permission, provenance, stable candidate selection, hit reservation/replay protection, ordered rule predicates, real single-resource Stats settlement, explicit life policy and an optional World/Entity adapter.
 
 ## Build and validate
 
@@ -18,13 +18,13 @@ The helper accepts `-VsRoot` and `-ExtraConfigureArguments`. Portable CMake call
 pwsh -NoProfile -File AYRuntime/AYCombat/tools/build-local.ps1 -Configure -BuildDirectory out/build/combat-core-only -Targets AYCombat_UnitTests -ExtraConfigureArguments '-DAY_COMBAT_BUILD_STATS=OFF'
 ```
 
-In the root engine build enable `AY_ENABLE_COMBAT` and `AY_ENABLE_STATS` (both default OFF for local unpublished modules). Link `AYCombat::Stats` for the recommended `settle` facade, or `AYCombat::Core` for pure Core. Disable `AY_COMBAT_BUILD_STATS` when no numerical adapter is wanted.
+In the root engine build enable `AY_ENABLE_COMBAT` and `AY_ENABLE_STATS` (both default OFF). Link `AYCombat::Stats` for the recommended `settle` facade, or `AYCombat::Core` for pure Core. Disable `AY_COMBAT_BUILD_STATS` when no numerical adapter is wanted.
 
 Enable `AY_COMBAT_BUILD_ENTITY=ON` in a root engine build to link `AYCombat::Entity`. Before registry seal call `registerCombatGameplayComponents`, then `installCombat(world)` acquires the World-owned gameplay facade and installs its numerical dependencies. Configure each actor once with `ActorProfile` (Stats schema, mapped life pool, life policy and team), then configure explicit directional team relations. Different teams are not implicitly hostile.
 
 `configureActor` initializes or deliberately rebuilds an actor's Stats from its schema. For an Entity that already has configured authoritative Stats, call `attachActor(handle, lifePolicy, team)` instead. It validates the existing persistent life pool, adds Combat if needed, and preserves values, effects, version, generation and pending commands.
 
-For a reproducible local pairing, use AYStats `main` at `602c57c` or newer; its combat-compatible source baseline is `6ea15f80dde6d154eea1ab1873d55e2d7ae51ccc`. The `codex/combat-compatible-stats` branch retains that baseline for traceability. Both repositories remain local with no remote.
+For a reproducible pairing, use AYStats `main` at `602c57c` or newer; its combat-compatible source baseline is `6ea15f80dde6d154eea1ab1873d55e2d7ae51ccc`. The root repository records compatible AYCombat and AYStats commits as submodule pointers.
 
 ```cpp
 auto& combat = *installCombat(world).value(); // Check Result in production; see Gameplay.cpp.
