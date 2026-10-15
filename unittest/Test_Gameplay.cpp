@@ -294,12 +294,15 @@ TEST_CASE(area_selected_friendly_members_enter_hold_and_exit_without_duplicate_e
     f.actor().immuneEffects.clear();
     candidates={{f.target,false},{f.target,true}};
     f.world.fixedUpdate(.016f);
+    const auto debug=f.combat->debugAreas();
+    CHECK(debug.size()==1 && debug[0].source==f.source && debug[0].sweep.area==id);
     auto entered=f.combat->lastAreaSweep(id).value();
     CHECK_TRUE(entered.targets.size()==1 && entered.targets[0].state==AreaTargetState::Entered);
     CHECK_TRUE(f.combat->areaMemberCount(id).value()==1 && f.combat->ownedEffectCount()==1);
     CHECK_TRUE(f.stats(f.target).read(statId("power"))->effective==30);
     f.world.fixedUpdate(.016f);
     CHECK_TRUE(f.combat->lastAreaSweep(id)->targets[0].state==AreaTargetState::Retained);
+    CHECK(debug[0].sweep.targets[0].state==AreaTargetState::Entered);
     CHECK_TRUE(f.combat->ownedEffectCount()==1 && f.stats(f.target).read(statId("power"))->effective==30);
     f.world.updatePresentation(.1f,1);candidates={{f.target,false}};
     CHECK_TRUE(f.combat->areaMemberCount(id).value()==1);

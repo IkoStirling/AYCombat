@@ -57,3 +57,13 @@ Subscribe with `setOnOutcome`/`setOnLifeChanged`; simple installation delivers a
 Advanced users may still `bindCombatant`, open explicit windows and `submit` through the same settlement chain; its numerical observer delivery remains NextTick. `takeOutcomes`/`takeLifeEvents` support explicit advanced delivery, and current/queued bindings retain generation checks. Each simple call creates a new action; transport/command retries must retain the advanced identity. Core rules own no numerical status timers.
 
 See [the gameplay example](examples/Gameplay.cpp) (`AYCombat_GameplayExample`), [advanced settlement](examples/SingleTarget.cpp), [interaction checks](unittest/Test_Interaction.cpp), [gameplay scenarios](unittest/Test_Gameplay.cpp), [contracts](design.md) and [execution plan](../../AYDocs/AYCOMBAT-IMPLEMENTATION-PLAN.md). Core stores no Entity pointers. Every Result must be checked. Physics mapping, shields, reactions, runtime save/load and Ability/Combo execution remain planned.
+
+## Editor diagnostic observations (2026-10-15)
+
+CombatSystem::debugAreas returns owned source/last-sweep observations without sampling providers, changing membership or replacing callbacks. The optional Physics2D area provider records its exact tested region through the manager diagnostic service. The editor marks affected and rejected/exited/failed area targets from real sweep results.
+Capture follows the shared debug lifetime, freeze and budget; disabled capture
+has no retained history. Diagnostics are not checkpointed or serialized.
+
+Verification: audited full inventory 94/94 passed, including owned area
+observation lifetime. Report:
+`out/debug-visualization-20261015/combat-full/e56ba939bed34c13b153b188667da35b/cases.json`.

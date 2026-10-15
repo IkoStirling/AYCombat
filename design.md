@@ -210,3 +210,9 @@ A single StatSet transaction is not a cross-object transaction. Multi-pool shiel
 ## Validation
 
 AYCombat_UnitTests partitions Core/ledger as fast and real Stats integration as integration, with disjoint full-tier coverage. AYCombat_Example builds and runs a real 30-damage/70-health scenario. Core-only compilation disables the Stats adapter and excludes its integration suite. Use the engine inventory auditor and case reports for authoritative case counts; CTest partition count is not case count.
+
+## Editor diagnostic observations (2026-10-15)
+
+CombatSystem::debugAreas returns owned source/last-sweep observations without sampling providers, changing membership or replacing callbacks. The optional Physics2D area provider records its exact tested region through the manager diagnostic service. The editor marks affected and rejected/exited/failed area targets from real sweep results.
+Capture follows the shared debug lifetime, freeze and budget; disabled capture
+has no retained history. Diagnostics are not checkpointed or serialized.

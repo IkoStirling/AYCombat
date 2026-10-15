@@ -69,6 +69,14 @@ Result<AreaCandidateProvider> makeAreaCandidateProvider2D(ayt::entity::World& wo
             if(!query.includeSource && found->second==source)continue;
             candidates.push_back({found->second,selection?selection(found->second):false});
         }
+        if(physics.debugDraw().options().enabled) {
+            ayt::physics::PhysicsDebugRecord record;record.category=ayt::physics::PhysicsDebugCategory::Ability;
+            record.dimension=ayt::physics::PhysicsDimension::TwoD;record.entityId=source.id;record.layerMask=query.layerMask;
+            record.label="Area candidate region (permission evaluated by Combat)";record.anchor=center;
+            ayt::physics::ColliderDesc shape;shape.shape=ayt::physics::ColliderShape::Sphere;shape.radius=query.radius;
+            record.lines=ayt::physics::PhysicsDebugDraw::colliderLines(shape,center,ayt::math::FQuaternion::identity(),record.dimension,candidates.empty()?0xff00ff00:0xff0000ff);
+            (void)physics.debugDraw().recordGeometry(std::move(record));
+        }
         return candidates;
     }};
 }

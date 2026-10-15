@@ -188,6 +188,9 @@ public:
     Result<AreaSweep> updateArea(std::uint64_t area);
     Result<AreaSweep> stopArea(std::uint64_t area);
     Result<AreaSweep> lastAreaSweep(std::uint64_t area) const;
+    struct DebugAreaSnapshot { ayt::entity::EntityHandle source; AreaSweep sweep; };
+    /// Owned, read-only diagnostic observations. Does not evaluate providers or install systems.
+    std::vector<DebugAreaSnapshot> debugAreas() const;
     Result<std::size_t> areaMemberCount(std::uint64_t area) const;
     /// Optional fixed-Sim delivery, including automatically ended areas.
     void setOnAreaSweep(std::function<void(const AreaSweep&)> callback) {_onAreaSweep=std::move(callback);}

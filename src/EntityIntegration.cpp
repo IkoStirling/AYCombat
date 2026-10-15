@@ -758,6 +758,10 @@ Result<AreaSweep> CombatSystem::updateArea(std::uint64_t id) {
     }
     area->last=sweep;return sweep;
 }
+std::vector<CombatSystem::DebugAreaSnapshot> CombatSystem::debugAreas() const {
+    std::vector<DebugAreaSnapshot> snapshots;snapshots.reserve(_areas.size());
+    for(const auto& area:_areas) snapshots.push_back({area.source,area.last});return snapshots;
+}
 Result<AreaSweep> CombatSystem::lastAreaSweep(std::uint64_t id) const {
     auto area=std::find_if(_areas.begin(),_areas.end(),[&](const auto& current){return current.id==id;});
     if(area==_areas.end())return fail(Error::Missing,"area identity missing");
