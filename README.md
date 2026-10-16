@@ -67,3 +67,9 @@ has no retained history. Diagnostics are not checkpointed or serialized.
 Verification: audited full inventory 94/94 passed, including owned area
 observation lifetime. Report:
 `out/debug-visualization-20261015/combat-full/e56ba939bed34c13b153b188667da35b/cases.json`.
+
+## Debug content extension (2026-10-15)
+
+Optional owner-thread debug capture defaults off. debugOutcomes and debugInteractions retain independent128-event histories with sequence, fixed tick and monotonic completion time; gameplay takeOutcomes/automatic callbacks remain independent. Debug allocation failures cannot change committed results. debugEffects copies up to512 current owned effects and remaining fixed ticks; UINT64_MAX means permanent. Clear/disable drops event observations, not effects or gameplay state.
+
+Module-local regression sources were updated. Runtime tests and interactive editor acceptance are deferred by the current task request; previous validation reports cover the earlier baseline. These changes remain uncommitted until focused runtime checks are requested and pass.

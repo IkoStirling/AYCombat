@@ -191,6 +191,18 @@ public:
     struct DebugAreaSnapshot { ayt::entity::EntityHandle source; AreaSweep sweep; };
     /// Owned, read-only diagnostic observations. Does not evaluate providers or install systems.
     std::vector<DebugAreaSnapshot> debugAreas() const;
+    struct DebugEffect { std::uint64_t instance=0,remainingTicks=0; ayt::entity::EntityHandle source,target; };
+    struct DebugOutcome { std::uint64_t sequence=0,tick=0,completedAtUs=0; CombatOutcome outcome; };
+    struct DebugInteraction { std::uint64_t sequence=0,tick=0,completedAtUs=0; InteractionResult interaction; };
+    /// Borrowed owner-thread history, invalidated by capture/clear; copy before retaining.
+    std::span<const DebugInteraction> debugInteractions() const noexcept { return _debugInteractions; }
+    /// Optional bounded independent history; never drains gameplay notifications. Owner thread only.
+    void setDebugCaptureEnabled(bool enabled) noexcept { _debugCapture=enabled; if(!enabled) { _debugOutcomes.clear();_debugInteractions.clear(); } }
+    void clearDebugHistory() noexcept { _debugOutcomes.clear();_debugInteractions.clear(); }
+    /// Borrowed owner-thread history; independent of takeOutcomes and automatic delivery.
+    std::span<const DebugOutcome> debugOutcomes() const noexcept { return _debugOutcomes; }
+    /// Copies at most 512 current owned effects. UINT64_MAX remaining ticks means permanent.
+    std::vector<DebugEffect> debugEffects() const;
     Result<std::size_t> areaMemberCount(std::uint64_t area) const;
     /// Optional fixed-Sim delivery, including automatically ended areas.
     void setOnAreaSweep(std::function<void(const AreaSweep&)> callback) {_onAreaSweep=std::move(callback);}
@@ -222,6 +234,11 @@ private:
     HitLedger _hits;
     RuleRegistry _rules;
     std::vector<CombatOutcome> _outcomes;
+    bool _debugCapture=false;
+    std::uint64_t _debugSequence=0;
+    std::vector<DebugOutcome> _debugOutcomes;
+    std::vector<DebugInteraction> _debugInteractions;
+    void captureDebugInteraction(const InteractionResult&) noexcept;
     static constexpr std::size_t OutcomeLimit = 1024;
     struct OwnedEffect {
         std::uint64_t id=0,expires=UINT64_MAX;

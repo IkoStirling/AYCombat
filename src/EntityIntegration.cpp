@@ -1,4 +1,5 @@
 #include <AYCombat/EntityIntegration.h>
+#include <AYTime/Clock.h>
 #include <AYEntity.h>
 #include <AYEntity/ComponentRegistration.h>
 #include <AYEntity/EntityRuntimeModule.h>
@@ -201,8 +202,27 @@ Result<CombatOutcome> CombatSystem::submit(EntityBinding binding, SettlementRequ
     if(current->combat->life() && current->combat->life()->sequence()!=sequence)outcome->life=current->combat->_lastTransition;
     if(auto resource=current->stats->state()->schema()->index(request.resource))outcome->remaining=current->stats->state()->rows()[*resource].current;
     notification = *outcome; // All scalar fields; change vector capacity was reserved before commit.
+    if(_debugCapture) try {
+        if(_debugOutcomes.size()>=128) _debugOutcomes.erase(_debugOutcomes.begin());
+        _debugOutcomes.push_back({++_debugSequence,_stats->tick(),ayt::time::Clock::performanceNowUs(),*outcome});
+    } catch(...) { /* Diagnostic allocation cannot change committed combat. */ }
     _outcomes.push_back(std::move(notification));
     return outcome;
+}
+void CombatSystem::captureDebugInteraction(const InteractionResult& result) noexcept {
+    if(!_debugCapture)return;
+    try {if(_debugInteractions.size()>=128)_debugInteractions.erase(_debugInteractions.begin());
+        _debugInteractions.push_back({++_debugSequence,_stats->tick(),ayt::time::Clock::performanceNowUs(),result});
+    } catch(...) { /* Diagnostics never affect committed interactions. */ }
+}
+std::vector<CombatSystem::DebugEffect> CombatSystem::debugEffects() const {
+    std::vector<DebugEffect> result; const auto tick=_stats?_stats->tick():0;
+    for(const auto& effect:_owned) {
+        if(result.size()==512) break;
+        if(!liveOwned(effect)) continue;
+        result.push_back({effect.id,effect.expires==UINT64_MAX?UINT64_MAX:effect.expires>tick?effect.expires-tick:0,{std::uint32_t(effect.source.ref.object),std::uint32_t(effect.source.ref.generation-1)},{std::uint32_t(effect.target.ref.object),std::uint32_t(effect.target.ref.generation-1)}});
+    }
+    return result;
 }
 std::vector<CombatOutcome> CombatSystem::takeOutcomes() {
     if (_settling || _delivering) return {};
@@ -358,7 +378,9 @@ Result<InteractionResult> CombatSystem::authorizeInteractionFromContext(const So
     InteractionFacts facts{selected,tags,immunities};
     auto decision=checkInteraction(provenance,view,_relations,policy,facts);
     if(!decision)return std::unexpected(decision.error());
-    return InteractionResult{*decision,provenance,target->ref};
+    InteractionResult result{*decision,provenance,target->ref};
+    if(!result.decision.allowed)captureDebugInteraction(result);
+    return result;
 }
 Result<InteractionResult> CombatSystem::interactAttribute(ayt::entity::EntityHandle source,
     ayt::entity::EntityHandle target,std::string_view stat,ayt::stats::AttributeOp operation,
@@ -371,6 +393,7 @@ Result<InteractionResult> CombatSystem::interactAttribute(ayt::entity::EntityHan
     if(!settled)return std::unexpected(numericDiagnostic(settled.error()));
     const auto& change=settled->changes.front();
     interaction->attribute=AttributeResult{change.before,change.after,change.actual,change.excess};
+    captureDebugInteraction(*interaction);
     return interaction;
 }
 Result<InteractionResult> CombatSystem::interactAttributeFromContext(const SourceContext& provenance,
@@ -393,6 +416,7 @@ Result<InteractionResult> CombatSystem::interactAttributeFromContext(const Sourc
     if(!settled)return std::unexpected(numericDiagnostic(settled.error()));
     const auto& change=settled->changes.front();
     interaction->attribute=AttributeResult{change.before,change.after,change.actual,change.excess};
+    captureDebugInteraction(*interaction);
     return interaction;
 }
 Result<InteractionResult> CombatSystem::applyEffect(ayt::entity::EntityHandle source,
@@ -410,6 +434,7 @@ Result<InteractionResult> CombatSystem::applyEffect(ayt::entity::EntityHandle so
     auto applied=stats->applyEffect(std::move(effect),stackPolicy,_stats->tick());
     if(!applied)return std::unexpected(numericDiagnostic(applied.error()));
     interaction->effectInstance=instance;
+    captureDebugInteraction(*interaction);
     return interaction;
 }
 bool CombatSystem::liveOwned(const OwnedEffect& owned) const {
@@ -515,6 +540,7 @@ Result<InteractionResult> CombatSystem::applyOwnedEffect(ayt::entity::EntityHand
     _nextOwnedId=id;
     interaction->effectInstance=id;interaction->source.effect=id;
     _owned.push_back(std::move(owned));
+    captureDebugInteraction(*interaction);
     return interaction;
 }
 Result<void> CombatSystem::refreshOwnedEffect(std::uint64_t instance,std::uint64_t durationTicks) {

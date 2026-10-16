@@ -181,4 +181,13 @@ TEST_CASE(stats_notification_backpressure_fails_before_damage_and_can_retry_afte
     f.world.fixedUpdate(.016f); r.expectedVersion = f.stats->version();
     CHECK_TRUE(f.submit(r)->kind == OutcomeKind::Damage && f.stats->read(r.resource)->current == 70);
 }
+TEST_CASE(debug_history_is_optional_bounded_and_independent_of_gameplay_outcome_delivery) {
+    Fixture f;CHECK_TRUE(f.submit(f.request()).has_value());CHECK_TRUE(f.system().debugOutcomes().empty());
+    f.system().takeOutcomes();f.system().setDebugCaptureEnabled(true);
+    for(std::uint64_t id=2;id<134;++id){CHECK_TRUE(f.submit(f.request(id)).has_value());f.system().takeOutcomes();}
+    CHECK_TRUE(f.system().debugOutcomes().size()==128);CHECK_TRUE(f.system().outcomes().empty());
+    const auto version=f.stats->version();const auto events=f.system().debugOutcomes();CHECK_TRUE(events.back().outcome.request==133);
+    CHECK_TRUE(f.stats->version()==version);f.system().clearDebugHistory();CHECK_TRUE(f.system().debugOutcomes().empty());
+    f.system().setDebugCaptureEnabled(false);CHECK_TRUE(f.submit(f.request(134)).has_value());CHECK_TRUE(f.system().debugOutcomes().empty());
+}
 TEST_SUITE_END
