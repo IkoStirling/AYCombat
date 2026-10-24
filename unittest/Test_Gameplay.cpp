@@ -1,5 +1,6 @@
 #include <AYTest.h>
 #include <AYCombat/EntityIntegration.h>
+#include <AYCombat/Action2DIntegration.h>
 #include <AYEntity.h>
 #include <AYEntity/EntityModule.h>
 #include <array>
@@ -51,6 +52,24 @@ struct GameplayFixture {
 };
 }
 TEST_SUITE(CombatGameplayTests)
+TEST_CASE(two_dimensional_action_hits_settle_once_in_action_order) {
+    GameplayFixture f;
+    ayt::ay2d::ActionStep2D step;
+    step.active=true;
+    step.cycle=1;
+    step.hits={{11,0},{12,1}};
+    auto resolve=[&](std::uint64_t id)->std::optional<ayt::entity::EntityHandle> {
+        if(id==11)return f.target;
+        return std::nullopt;
+    };
+    const auto settled=dispatchActionHits2D(*f.combat,f.source,step,resolve,25);
+    CHECK_INT_EQ(settled.size(),2u);
+    CHECK_TRUE(settled[0].result.has_value());
+    CHECK_INT_EQ(settled[0].result->actual,25);
+    CHECK_TRUE(!settled[1].result.has_value());
+    CHECK_TRUE(settled[1].result.error().code==ayt::combat::Error::Missing);
+    CHECK_INT_EQ(f.hp(),75);
+}
 TEST_CASE(exact_life_restoration_policy_is_authored_and_removal_is_atomic) {
     GameplayFixture f(true);
     CHECK_TRUE(f.combat->damage(f.source,f.target,20).has_value());
