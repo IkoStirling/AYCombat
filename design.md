@@ -267,7 +267,9 @@ requires clearing the ledger because Combat runtime state is not checkpointed.
 ## 3D area candidate boundary (2026-10-24)
 
 Physics3DArea is an optional Entity/Jolt adapter. It samples the source
-Transform and performs a synchronous sphere overlap on each provider call.
+Transform and performs a synchronous sphere or oriented-box overlap on each
+provider call. Box half extents are authored in source-local axes, while
+the offset is world-space. Invalid geometry rejects before binding.
 The complete returned body set is deduplicated, then mapped through current
 generation-aware Entity handles; only actors with both Stats and Combat enter
 the candidate set. Multiple entities claiming one returned body reject the

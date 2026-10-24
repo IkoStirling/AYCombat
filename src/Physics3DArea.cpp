@@ -14,7 +14,13 @@ template<class T> Result<T> invalid(Error code, std::string message) {
 }
 }
 Result<void> validateAreaQuery3D(const AreaQuery3D& query) {
-    if (!std::isfinite(query.radius) || query.radius <= 0 || query.radius > 1000 ||
+    const bool sphere = query.shape == AreaShape3D::Sphere;
+    const bool box = query.shape == AreaShape3D::Box;
+    if ((!sphere && !box) ||
+        (sphere && (!std::isfinite(query.radius) || query.radius <= 0 || query.radius > 1000)) ||
+        (box && (!std::isfinite(query.halfExtents.x) || query.halfExtents.x <= 0 || query.halfExtents.x > 1000 ||
+                 !std::isfinite(query.halfExtents.y) || query.halfExtents.y <= 0 || query.halfExtents.y > 1000 ||
+                 !std::isfinite(query.halfExtents.z) || query.halfExtents.z <= 0 || query.halfExtents.z > 1000)) ||
         !std::isfinite(query.offset.x) || !std::isfinite(query.offset.y) ||
         !std::isfinite(query.offset.z) || !query.layerMask)
         return invalid<void>(Error::Invalid, "invalid 3D area query");
@@ -41,8 +47,11 @@ Result<AreaCandidateProvider> makeAreaCandidateProvider3D(ayt::entity::World& wo
         const ayt::math::FVector3 center{transform->position.x + query.offset.x,
             transform->position.y + query.offset.y, transform->position.z + query.offset.z};
         std::vector<ayt::physics::BodyHandle> bodies;
-        if (backend->overlapSphereSync(center, query.radius, bodies, query.layerMask) !=
-            ayt::physics::PhysResult::Ok)
+        const auto overlap = query.shape == AreaShape3D::Sphere
+            ? backend->overlapSphereSync(center, query.radius, bodies, query.layerMask)
+            : backend->overlapBoxSync(center, query.halfExtents, transform->rotation,
+                                      bodies, query.layerMask);
+        if (overlap != ayt::physics::PhysResult::Ok)
             return invalid<std::vector<AreaCandidate>>(Error::Invalid, "3D area overlap query failed");
         const std::set<ayt::physics::BodyHandle> overlapping(bodies.begin(), bodies.end());
         std::map<ayt::physics::BodyHandle, ayt::entity::EntityHandle> mapped;

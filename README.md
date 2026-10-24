@@ -94,10 +94,12 @@ Module-local regression sources were updated. Runtime tests and interactive edit
 ## 3D area candidates (2026-10-24)
 
 `AYCombat::Physics3D` exposes `makeAreaCandidateProvider3D` for source-following
-Jolt spheres. A current source Transform defines the center; the query maps
+Jolt spheres and oriented boxes. A current source Transform defines the center
+and box orientation; the query maps
 overlapping 3D rigid bodies to unique Entity handles with Stats and Combat.
 Scenery is ignored, duplicate body ownership is rejected, and Combat applies
 selection, relation, immunity and membership rules on every fixed Sim sweep.
 The World and PhysicsManager must outlive active areas; query failures preserve
 prior Combat membership through the existing sweep contract. This adapter
-does not change the headless candidate provider or implement 3D box queries.
+does not change the headless candidate provider. The offset remains in world
+coordinates; only a box's orientation follows the source rotation.

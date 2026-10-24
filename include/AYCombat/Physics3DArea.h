@@ -4,13 +4,16 @@
 #include <AYMath/MathTypes.h>
 
 namespace ayt::combat {
-/// Source-following Jolt sphere query. Physics provides candidates only;
+/// Source-following Jolt sphere or oriented-box query. Physics provides candidates only;
 /// Combat applies selection, relation and area membership rules.
+enum class AreaShape3D { Sphere, Box };
 struct AreaQuery3D {
     float radius = 0.0f;
     ayt::math::FVector3 offset{};
     ayt::physics::PhysLayerMask layerMask = 0xffffffffu;
     bool includeSource = false;
+    AreaShape3D shape = AreaShape3D::Sphere;
+    ayt::math::FVector3 halfExtents{}; // box only; orientation follows source Transform
 };
 /// Pure selection fact evaluated for each in-range actor on every sweep.
 using AreaSelection3D = std::function<bool(ayt::entity::EntityHandle)>;
