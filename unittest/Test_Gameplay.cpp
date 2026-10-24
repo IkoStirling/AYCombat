@@ -70,6 +70,60 @@ TEST_CASE(two_dimensional_action_hits_settle_once_in_action_order) {
     CHECK_TRUE(settled[1].result.error().code==ayt::combat::Error::Missing);
     CHECK_INT_EQ(f.hp(),75);
 }
+TEST_CASE(two_dimensional_action_receipts_prevent_retry_damage_and_reject_changed_hits) {
+    GameplayFixture f;
+    Action2DCombatReceipts receipts(2);
+    ayt::ay2d::ActionStep2D step;
+    step.active = true;
+    step.cycle = 7;
+    step.hits = {{11, 0}, {12, 1}};
+    int resolutions = 0;
+    auto resolve = [&](std::uint64_t id)
+        -> std::optional<ayt::entity::EntityHandle> {
+        ++resolutions;
+        if (id == 11) return f.target;
+        return std::nullopt;
+    };
+    auto first = receipts.settle(*f.combat, f.source, step, resolve, 25);
+    CHECK_TRUE(first.has_value());
+    CHECK_INT_EQ(first->size(), 2u);
+    CHECK_TRUE((*first)[0].result.has_value());
+    CHECK_TRUE(!(*first)[1].result.has_value());
+    CHECK_INT_EQ(f.hp(), 75);
+    CHECK_INT_EQ(resolutions, 2);
+    auto retried = receipts.settle(*f.combat, f.source, step, resolve, 25);
+    CHECK_TRUE(retried.has_value());
+    CHECK_INT_EQ((*retried)[0].result->actionId,
+                 (*first)[0].result->actionId);
+    CHECK_INT_EQ(f.hp(), 75);
+    CHECK_INT_EQ(resolutions, 2);
+    CHECK_FALSE(receipts.settle(*f.combat, f.source, step, resolve, 30).has_value());
+    CHECK_INT_EQ(f.hp(), 75);
+    step.hits[0].hitBox = 9;
+    CHECK_FALSE(receipts.settle(*f.combat, f.source, step, resolve, 25).has_value());
+    CHECK_INT_EQ(f.hp(), 75);
+    CHECK_INT_EQ(receipts.size(), 2u);
+    receipts.forgetBefore(f.source, 8);
+    CHECK_INT_EQ(receipts.size(), 0u);
+}
+TEST_CASE(two_dimensional_action_receipt_capacity_rejects_before_any_damage) {
+    GameplayFixture f;
+    Action2DCombatReceipts receipts(1);
+    ayt::ay2d::ActionStep2D step;
+    step.active = true;
+    step.cycle = 1;
+    step.hits = {{11, 0}, {12, 1}};
+    auto resolve = [&](std::uint64_t id)
+        -> std::optional<ayt::entity::EntityHandle> {
+        return id == 11 ? std::optional{f.target} : std::nullopt;
+    };
+    CHECK_FALSE(receipts.settle(*f.combat, f.source, step, resolve, 25).has_value());
+    CHECK_INT_EQ(f.hp(), 100);
+    CHECK_INT_EQ(receipts.size(), 0u);
+    step.hits.pop_back();
+    CHECK_TRUE(receipts.settle(*f.combat, f.source, step, resolve, 25).has_value());
+    CHECK_INT_EQ(f.hp(), 75);
+}
 TEST_CASE(exact_life_restoration_policy_is_authored_and_removal_is_atomic) {
     GameplayFixture f(true);
     CHECK_TRUE(f.combat->damage(f.source,f.target,20).has_value());

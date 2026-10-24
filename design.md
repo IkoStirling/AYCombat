@@ -230,3 +230,16 @@ has no retained history. Diagnostics are not checkpointed or serialized.
 Optional owner-thread debug capture defaults off. debugOutcomes and debugInteractions retain independent128-event histories with sequence, fixed tick and monotonic completion time; gameplay takeOutcomes/automatic callbacks remain independent. Debug allocation failures cannot change committed results. debugEffects copies up to512 current owned effects and remaining fixed ticks; UINT64_MAX means permanent. Clear/disable drops event observations, not effects or gameplay state.
 
 Module-local regression sources were updated. Runtime tests and interactive editor acceptance are deferred by the current task request; previous validation reports cover the earlier baseline. These changes remain uncommitted until focused runtime checks are requested and pass.
+
+## Ordinary 2D action settlement receipts (2026-10-24)
+
+`Action2DCombatReceipts` belongs to one live World and sits after the ordinary
+`ActionRuntime2D` hit calculation. It preflights a complete step for a valid
+cycle, unique targets, unchanged retry parameters and available receipt capacity
+before calling Combat. One receipt key includes source EntityHandle incarnation,
+action cycle and target ID. Both success and failure results are retained, so
+repeated delivery cannot create an extra Combat one-shot attack or turn a prior
+missing target into a late hit. Previously successful targets remain committed
+when a later target fails; this is not an atomic batch. Caller-controlled pruning
+is safe only after retries for older cycles have ended. World replacement/restore
+requires clearing the ledger because Combat runtime state is not checkpointed.
