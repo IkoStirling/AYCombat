@@ -263,3 +263,15 @@ missing target into a late hit. Previously successful targets remain committed
 when a later target fails; this is not an atomic batch. Caller-controlled pruning
 is safe only after retries for older cycles have ended. World replacement/restore
 requires clearing the ledger because Combat runtime state is not checkpointed.
+
+## 3D area candidate boundary (2026-10-24)
+
+Physics3DArea is an optional Entity/Jolt adapter. It samples the source
+Transform and performs a synchronous sphere overlap on each provider call.
+The complete returned body set is deduplicated, then mapped through current
+generation-aware Entity handles; only actors with both Stats and Combat enter
+the candidate set. Multiple entities claiming one returned body reject the
+whole sweep, leaving Combat's prior membership intact. Geometry supplies no
+permission decision. Combat still checks current relations and target facts.
+The adapter borrows World, PhysicsManager and any selection capture through
+the area's lifetime; callers end areas before destroying those dependencies.
