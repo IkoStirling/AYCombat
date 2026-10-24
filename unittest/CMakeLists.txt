@@ -1,4 +1,4 @@
-add_executable(AYCombat_UnitTests main.cpp Test_Core.cpp Test_HitLedger.cpp Test_Interaction.cpp Test_Rules.cpp)
+add_executable(AYCombat_UnitTests main.cpp Test_Core.cpp Test_HitLedger.cpp Test_Interaction.cpp Test_Rules.cpp Test_InitiativeClock.cpp)
 target_link_libraries(AYCombat_UnitTests PRIVATE AYCombatCore AYTest)
 if(TARGET AYCombatStatsIntegration)
     target_sources(AYCombat_UnitTests PRIVATE Test_StatsIntegration.cpp)

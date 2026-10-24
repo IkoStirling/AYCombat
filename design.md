@@ -6,6 +6,16 @@
 
 Core is C++23 and standard-library-only. It owns no Entity, World, Stats pool or game object. It provides owned provenance values, directional team relations, pure operation permission checks, stable selection of already-mapped collider candidates, and a single-owner hit ledger. The optional Stats target executes a real immutable CalculationPlan and commits one persistent pool in one caller-owned StatSet.
 
+`InitiativeClock` is an independent optional Core scheduler. The host supplies
+fixed logical ticks and stable actor IDs; readiness is computed arithmetically
+from a bounded threshold and positive per-actor rates, ordered by first ready
+tick then actor ID. One actor may be Acting while others wait Ready. Completion
+resets only that actor's gauge; removing an actor releases its turn. The clock
+does not select an action or commit Ability/Combat effects. A versioned value
+snapshot captures tick, author threshold, rates, gauges and phases; restore
+validates the whole candidate before publication. Actor additions and rate
+changes after an action start are host decisions at a serialized boundary.
+
 Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission, N4 owned effect contributions, N5 headless area membership and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Physics candidate providers, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
 
 ## Identity and ownership

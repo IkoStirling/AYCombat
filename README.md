@@ -2,6 +2,14 @@
 
 Independent Git repository on `main`, registered as an AliyatEngine submodule. Provides relationships, target permission, provenance, stable candidate selection, hit reservation/replay protection, ordered rule predicates, real single-resource Stats settlement, explicit life policy and an optional World/Entity adapter.
 
+`AYCombat/InitiativeClock.h` provides an optional game-owned fixed-tick action
+order for turn-style and ATB-style combat. The host advances logical ticks,
+starts one ready actor, runs its own Ability/Combat action, then finishes that
+actor. Equal rates produce rounds; differing rates preserve the earliest ready
+tick and stable actor-ID ties. The clock has no Entity pointers or damage rules;
+its validated snapshot can be stored with the game's battle state. See
+`AYCombat_InitiativeExample` and `CombatInitiativeClockTests`.
+
 ## Build and validate
 
 From the engine root on the current Windows development host:
