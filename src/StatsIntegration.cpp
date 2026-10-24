@@ -1,5 +1,6 @@
 #include <AYCombat/StatsIntegration.h>
 #include <exception>
+#include <set>
 
 namespace ayt::combat {
 namespace {
@@ -139,6 +140,79 @@ Result<CombatOutcome> settle(const SettlementRequest& request, const RelationTab
     outcome.settlement = std::move(*settlement);
     outcome.kind = outcome.settlement.changes[0].actual == 0 ? OutcomeKind::Zero :
         (request.filter.operation == Operation::Damage ? OutcomeKind::Damage : OutcomeKind::Heal);
+    if (options.life) outcome.life = options.life->observe(outcome.settlement);
+    return outcome;
+}
+
+Result<CombatOutcome> settleResources(const SettlementRequest& request,
+    const RelationTable& relations, HitLedger& ledger,
+    ayt::stats::StatSet& targetState,
+    std::span<const ayt::stats::Mutation> mutations,
+    SettlementOptions options) {
+    auto decision = validate(request, relations);
+    if (!decision) return std::unexpected(decision.error());
+    CombatOutcome outcome{request.hit.attack, request.hit.request, request.hit.target,
+                          request.source, request.filter.operation,
+                          OutcomeState::Rejected, *decision};
+    outcome.part = request.hit.part;
+    outcome.segment = request.hit.segment;
+    if (!decision->allowed) return outcome;
+    auto rule = ruleDecision(request, options);
+    if (!rule) return std::unexpected(rule.error());
+    outcome.rule = *rule;
+    if (rule->action == RuleAction::Reject) return outcome;
+    if (options.life && (!options.life->policy().resource ||
+        (options.life->policy().depleted != LifePhase::Dead
+         && options.life->policy().depleted != LifePhase::Downed)))
+        return fail(Error::Invalid, "invalid life resource/depletion policy");
+    if (mutations.empty() || mutations.size() > 32)
+        return fail(Error::Limit, "resource settlement needs 1..32 mutations");
+    if (targetState.version() != request.expectedVersion)
+        return fail(Error::Stale, "target numerical state changed");
+    std::set<ayt::stats::StatId> seen;
+    bool primary = false;
+    const auto requiredOp = request.filter.operation == Operation::Damage
+        ? ayt::stats::MutationOp::Decrease : ayt::stats::MutationOp::Increase;
+    for (const auto& mutation : mutations) {
+        if (!mutation.target || mutation.op != requiredOp || mutation.amount < 0
+            || !seen.insert(mutation.target).second)
+            return fail(Error::Invalid, "invalid or duplicate resource mutation");
+        const auto index = targetState.schema()->index(mutation.target);
+        if (!index) return fail(Error::Missing, "target resource is not defined");
+        const auto& definition = targetState.schema()->definitions()[*index];
+        if (definition.shape != ayt::stats::Shape::Pool
+            || definition.lifetime != ayt::stats::Lifetime::Persistent)
+            return fail(Error::Invalid, "resource mutation needs a persistent pool");
+        if (mutation.target == request.resource) {
+            primary = true;
+            outcome.calculated = mutation.amount;
+        }
+    }
+    if (!primary) return fail(Error::Invalid, "primary resource mutation missing");
+    auto reservation = ledger.reserve(request.hit);
+    if (!reservation) return std::unexpected(reservation.error());
+    ReservationGuard guard{ledger, *reservation};
+    if (rule->action == RuleAction::Block) {
+        if (!ledger.complete(*reservation)) std::terminate();
+        guard.completed = true;
+        outcome.state = OutcomeState::Applied;
+        outcome.kind = OutcomeKind::Blocked;
+        outcome.calculated = 0;
+        outcome.settlement.beforeVersion = outcome.settlement.afterVersion
+            = request.expectedVersion;
+        return outcome;
+    }
+    auto settlement = targetState.commit(mutations, request.expectedVersion);
+    if (!settlement) return std::unexpected(numericError(settlement.error()));
+    if (!ledger.complete(*reservation)) std::terminate();
+    guard.completed = true;
+    outcome.state = OutcomeState::Applied;
+    outcome.settlement = std::move(*settlement);
+    bool changed = false;
+    for (const auto& change : outcome.settlement.changes)
+        changed |= change.actual != 0;
+    outcome.kind = changed ? (request.filter.operation == Operation::Damage
+        ? OutcomeKind::Damage : OutcomeKind::Heal) : OutcomeKind::Zero;
     if (options.life) outcome.life = options.life->observe(outcome.settlement);
     return outcome;
 }

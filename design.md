@@ -16,6 +16,16 @@ snapshot captures tick, author threshold, rates, gauges and phases; restore
 validates the whole candidate before publication. Actor additions and rate
 changes after an action start are host decisions at a serialized boundary.
 
+`settleResources` is a second optional Stats entry for a game-calculated hit
+that affects multiple pools of the same target. It requires 1..32 distinct
+persistent Pool mutations, all Increase for Heal or Decrease for Damage, and
+one mutation for the request's primary resource. After permission/rule checks,
+the same HitLedger reservation guards one atomic StatSet commit. An invalid or
+failed numerical candidate releases the allowance; success retains the
+complete multi-pool Settlement, with life observed from its final resource
+change. Armor coverage, penetration and damage formulas remain game data;
+other actors and Inventory durability are not included in this commit.
+
 Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission, N4 owned effect contributions, N5 headless area membership and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Physics candidate providers, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
 
 ## Identity and ownership

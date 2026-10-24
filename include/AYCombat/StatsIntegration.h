@@ -91,4 +91,18 @@ Result<CombatOutcome> settle(const SettlementRequest& request, const RelationTab
                             const ayt::stats::CalculationPlan& plan, std::span<const ayt::stats::Value> inputs,
                             SettlementOptions options = {});
 
+/// Commit an authored set of nonnegative pool changes for one accepted hit.
+/// Use this when one part/armor decision changes several pools in the same
+/// StatSet. All mutations must match the request's Damage/Heal direction, have
+/// distinct persistent pool IDs, and include request.resource as the primary
+/// outcome pool. The game computes coverage and amounts before this call.
+/// The StatSet commits every mutation atomically or none; one hit receipt is
+/// completed only after that commit. Other actors and item durability remain
+/// separate game-owned transactions.
+Result<CombatOutcome> settleResources(const SettlementRequest& request,
+    const RelationTable& relations, HitLedger& ledger,
+    ayt::stats::StatSet& targetState,
+    std::span<const ayt::stats::Mutation> mutations,
+    SettlementOptions options = {});
+
 } // namespace ayt::combat

@@ -9,6 +9,14 @@ ayt::stats::StatSet stats() {
         .name = "health", .shape = ayt::stats::Shape::Pool, .current = 100, .capacity = 100}}).value();
     return ayt::stats::StatSet::create(schema).value();
 }
+ayt::stats::StatSet armoredStats() {
+    auto schema = ayt::stats::Schema::compile({
+        ayt::stats::Definition{.name = "armor", .shape = ayt::stats::Shape::Pool,
+            .current = 50, .capacity = 50},
+        ayt::stats::Definition{.name = "health", .shape = ayt::stats::Shape::Pool,
+            .current = 100, .capacity = 100}}).value();
+    return ayt::stats::StatSet::create(schema).value();
+}
 ayt::stats::CalculationPlan plan() {
     return ayt::stats::CalculationPlan::compile({{.id = 1, .op = ayt::stats::Op::Input, .binding = 0}}, 1, 1).value();
 }
@@ -19,6 +27,51 @@ SettlementRequest request(std::uint64_t id, const ayt::stats::StatSet& state) {
 }
 
 TEST_SUITE(CombatStatsIntegrationTests)
+
+TEST_CASE(one_hit_commits_armor_and_health_together) {
+    auto state = armoredStats(); auto book = ledger(); auto r = request(1, state);
+    const std::array<ayt::stats::Mutation, 2> changes{{
+        {ayt::stats::statId("armor"), ayt::stats::MutationOp::Decrease, 30},
+        {ayt::stats::statId("health"), ayt::stats::MutationOp::Decrease, 20}}};
+    const auto result = settleResources(r, relations(), book, state, changes).value();
+    CHECK_TRUE(result.state == OutcomeState::Applied && result.kind == OutcomeKind::Damage);
+    CHECK_TRUE(result.calculated == 20 && result.settlement.changes.size() == 2);
+    CHECK_TRUE(state.read(ayt::stats::statId("armor"))->current == 20
+        && state.read(ayt::stats::statId("health"))->current == 80);
+    r.expectedVersion = state.version();
+    CHECK_TRUE(settleResources(r, relations(), book, state, changes).error().code
+        == Error::Duplicate);
+}
+
+TEST_CASE(invalid_second_pool_keeps_first_pool_and_hit_retryable) {
+    auto state = armoredStats(); auto book = ledger(); const auto r = request(1, state);
+    const std::array<ayt::stats::Mutation, 2> invalid{{
+        {ayt::stats::statId("armor"), ayt::stats::MutationOp::Decrease, 30},
+        {ayt::stats::statId("missing"), ayt::stats::MutationOp::Decrease, 20}}};
+    const auto version = state.version();
+    CHECK_TRUE(settleResources(r, relations(), book, state, invalid).error().code
+        == Error::Missing);
+    CHECK_TRUE(state.version() == version && book.retainedRequests() == 0
+        && state.read(ayt::stats::statId("armor"))->current == 50);
+    const std::array<ayt::stats::Mutation, 2> valid{{
+        invalid[0], {ayt::stats::statId("health"),
+                     ayt::stats::MutationOp::Decrease, 20}}};
+    CHECK_TRUE(settleResources(r, relations(), book, state, valid).has_value());
+    CHECK_TRUE(state.read(ayt::stats::statId("health"))->current == 80);
+}
+
+TEST_CASE(multi_pool_life_transition_uses_final_health) {
+    auto state = armoredStats(); auto book = ledger(); const auto r = request(1, state);
+    LifeTracker life({ayt::stats::statId("health"), LifePhase::Downed});
+    const std::array<ayt::stats::Mutation, 2> changes{{
+        {ayt::stats::statId("armor"), ayt::stats::MutationOp::Decrease, 50},
+        {ayt::stats::statId("health"), ayt::stats::MutationOp::Decrease, 100}}};
+    const auto result = settleResources(r, relations(), book, state, changes,
+                                        {.life=&life}).value();
+    CHECK_TRUE(result.life && result.life->after == LifePhase::Downed);
+    CHECK_TRUE(life.phase() == LifePhase::Downed
+        && state.read(ayt::stats::statId("health"))->current == 0);
+}
 
 TEST_CASE(ordered_80_80_preserves_actual_80_20_and_excess) {
     auto state = stats(); auto book = ledger({HitScope::Segment}); auto table = relations(); const auto formula = plan();

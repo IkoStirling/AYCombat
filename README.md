@@ -10,6 +10,13 @@ tick and stable actor-ID ties. The clock has no Entity pointers or damage rules;
 its validated snapshot can be stored with the game's battle state. See
 `AYCombat_InitiativeExample` and `CombatInitiativeClockTests`.
 
+`settleResources` commits one accepted hit to up to 32 distinct persistent
+Stats pools in one target StatSet. Games calculate the part/armor distribution
+and pass nonnegative mutations; Combat validates direction and pool identity,
+reserves one hit receipt, then publishes all resource changes or none. The
+outcome retains every Stats change and optional life transition. See
+`AYCombat_ArmorHealthExample` and `CombatStatsIntegrationTests`.
+
 ## Build and validate
 
 From the engine root on the current Windows development host:
