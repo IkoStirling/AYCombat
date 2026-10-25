@@ -16,6 +16,13 @@ and pass nonnegative mutations; Combat validates direction and pool identity,
 reserves one hit receipt, then publishes all resource changes or none. The
 outcome retains every Stats change and optional life transition. See
 `AYCombat_ArmorHealthExample` and `CombatStatsIntegrationTests`.
+`settleBatch` stages 1..64 ordered hits against up to 64 caller-owned
+`StatSet` targets, optional life trackers and a copied HitLedger. It publishes
+all numerical states and receipts only after every hit succeeds. Repeated
+hits on one target use the live version at batch start and advance staged
+versions in caller order. The game owns action state, Entity notifications,
+World/Inventory effects and persistent save. This is a low-level Stats entry;
+the World-owned `CombatSystem::submit` still settles one target per call.
 
 ## Build and validate
 

@@ -25,6 +25,15 @@ failed numerical candidate releases the allowance; success retains the
 complete multi-pool Settlement, with life observed from its final resource
 change. Armor coverage, penetration and damage formulas remain game data;
 other actors and Inventory durability are not included in this commit.
+`settleBatch` is a separate low-level owner boundary for 1..64 ordered hits
+across up to 64 target StatSets. It copies the HitLedger, each numerical state
+and optional LifeTracker, runs ordinary settlement on the shadows, then uses
+no-throw moves to publish the complete set. Every request compares its
+expected version to the live state at batch start; repeated hits on one
+target use the shadow's advancing version. On any error the live states,
+receipts, life phases and output vector remain unchanged. Relation/rule
+snapshots, action-runtime state, Entity callbacks, World/Inventory changes and
+disk persistence remain with the caller.
 
 Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission, N4 owned effect contributions, N5 headless area membership and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Physics candidate providers, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
 
@@ -233,7 +242,13 @@ reactions and Ability/Combo execution remain later work.
 
 AYCombat::Core has no Stats/Entity/Physics dependency. AYCombat::Stats links Core and AYStats::Core. Optional AYCombat::Entity links Stats adapter and AYStats::Entity; it is assembled after those targets in the root build. Standalone Entity configuration fails clearly. Root opt-in requires the local checkouts; absent Stats must disable the adapter or fail configuration clearly. No remote/submodule URL is invented.
 
-A single StatSet transaction is not a cross-object transaction. Multi-pool shield settlement, reflection/lifesteal and batch completion must use validated Stats contracts in later stages. Geometry, animation and Combo decisions consume Combat results in higher or optional layers; Core does not know skill graphs.
+A single StatSet transaction covers only one object. The low-level staged
+`settleBatch` covers several caller-owned StatSets and hit receipts without
+callbacks; the World-owned Combat facade still lacks a matching grouped
+publication. Multi-pool shield settlement is available through
+`settleResources`; reflection/lifesteal and item durability remain separate.
+Geometry, animation and Combo decisions consume Combat results in higher or
+optional layers; Core does not know skill graphs.
 
 ## Validation
 

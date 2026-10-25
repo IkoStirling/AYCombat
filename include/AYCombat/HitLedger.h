@@ -41,6 +41,9 @@ public:
     Result<void> close(AttackRef attack);
     /// Owner's next one-shot identity, compatible with explicitly opened advanced attacks.
     Result<std::uint64_t> nextAttackId(std::uint64_t domain) const;
+    /// Copy an unpublished candidate for an owner-controlled atomic batch.
+    /// The copy has no shared mutable storage with the live ledger.
+    [[nodiscard]] HitLedger stagedCopy() const;
     std::size_t activeAttacks() const noexcept { return _attacks.size(); }
     std::size_t retainedRequests() const noexcept;
 private:

@@ -123,4 +123,11 @@ std::size_t HitLedger::retainedRequests() const noexcept {
     return count;
 }
 
+HitLedger HitLedger::stagedCopy() const {
+    HitLedger candidate(_limits);
+    candidate._domains = _domains;
+    candidate._attacks = _attacks;
+    return candidate;
+}
+
 } // namespace ayt::combat

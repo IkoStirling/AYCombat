@@ -28,6 +28,79 @@ SettlementRequest request(std::uint64_t id, const ayt::stats::StatSet& state) {
 
 TEST_SUITE(CombatStatsIntegrationTests)
 
+TEST_CASE(batch_failure_keeps_all_target_stats_life_receipts_and_output) {
+    auto first = stats(), second = stats();
+    auto book = ledger();
+    auto table = relations();
+    const auto formula = plan();
+    LifeTracker life({ayt::stats::statId("health"), LifePhase::Downed});
+    const std::array<ayt::stats::Value, 1> fatal{100}, minor{20};
+    auto a = request(1, first);
+    auto b = request(2, second);
+    b.hit.target = actor(3);
+    b.target.ref = actor(3);
+    b.resource = ayt::stats::statId("missing");
+    std::array<CombatBatchHit, 2> hits{{{a, &formula, fatal},
+                                         {b, &formula, minor}}};
+    const std::array<CombatBatchTarget, 2> targets{{
+        {actor(2), &first, &life}, {actor(3), &second, nullptr}}};
+    std::vector<CombatOutcome> outcomes(1);
+    const auto initialVersion = first.version();
+    const std::array<CombatBatchTarget, 2> aliased{{
+        {actor(2), &first, &life}, {actor(3), &first, nullptr}}};
+    CHECK_TRUE(settleBatch(hits, aliased, table, book, outcomes).error().code
+        == Error::Duplicate);
+    auto splitTicks = hits;
+    splitTicks[1].request.hit.tick = hits[0].request.hit.tick + 1;
+    CHECK_TRUE(settleBatch(splitTicks, targets, table, book, outcomes)
+        .error().code == Error::Invalid);
+    CHECK_TRUE(settleBatch(hits, targets, table, book, outcomes).error().code
+        == Error::Missing);
+    CHECK_TRUE(first.version() == initialVersion
+        && second.version() == initialVersion
+        && first.read(a.resource)->current == 100
+        && second.read(a.resource)->current == 100
+        && life.phase() == LifePhase::Alive
+        && book.retainedRequests() == 0
+        && outcomes.size() == 1);
+
+    hits[1].request.resource = a.resource;
+    CHECK_TRUE(settleBatch(hits, targets, table, book, outcomes).has_value());
+    CHECK_TRUE(first.read(a.resource)->current == 0
+        && second.read(a.resource)->current == 80
+        && life.phase() == LifePhase::Downed
+        && book.retainedRequests() == 2
+        && outcomes.size() == 2
+        && outcomes[0].life && outcomes[0].life->after == LifePhase::Downed);
+    hits[0].request.expectedVersion = first.version();
+    hits[1].request.expectedVersion = second.version();
+    CHECK_TRUE(settleBatch(hits, targets, table, book, outcomes).error().code
+        == Error::Duplicate);
+    CHECK_TRUE(first.read(a.resource)->current == 0
+        && second.read(a.resource)->current == 80
+        && outcomes.size() == 2);
+}
+
+TEST_CASE(batch_rebases_same_target_hits_on_staged_versions_in_caller_order) {
+    auto state = stats();
+    auto book = ledger({HitScope::Segment});
+    const auto formula = plan();
+    const std::array<ayt::stats::Value, 1> amount{80};
+    auto a = request(1, state);
+    auto b = request(2, state);
+    b.hit.segment = 1;
+    const std::array<CombatBatchHit, 2> hits{{{a, &formula, amount},
+                                               {b, &formula, amount}}};
+    const std::array<CombatBatchTarget, 1> targets{{{actor(2), &state, nullptr}}};
+    std::vector<CombatOutcome> outcomes;
+    CHECK_TRUE(settleBatch(hits, targets, relations(), book, outcomes).has_value());
+    CHECK_TRUE(state.read(a.resource)->current == 0
+        && outcomes.size() == 2
+        && outcomes[0].settlement.changes[0].actual == -80
+        && outcomes[1].settlement.changes[0].actual == -20
+        && outcomes[1].settlement.changes[0].excess == 60);
+}
+
 TEST_CASE(one_hit_commits_armor_and_health_together) {
     auto state = armoredStats(); auto book = ledger(); auto r = request(1, state);
     const std::array<ayt::stats::Mutation, 2> changes{{

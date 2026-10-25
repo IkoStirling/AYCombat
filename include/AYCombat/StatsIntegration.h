@@ -105,4 +105,28 @@ Result<CombatOutcome> settleResources(const SettlementRequest& request,
     std::span<const ayt::stats::Mutation> mutations,
     SettlementOptions options = {});
 
+/// One ordered hit in a 1..64-hit same-domain fixed-tick batch. Inputs and plan are
+/// borrowed for the call. Every request carries the target's live version
+/// at batch start; later hits on that target use staged versions internally.
+struct CombatBatchHit {
+    SettlementRequest request;
+    const ayt::stats::CalculationPlan* plan = nullptr;
+    std::span<const ayt::stats::Value> inputs;
+};
+
+struct CombatBatchTarget {
+    CombatantRef ref;
+    ayt::stats::StatSet* state = nullptr;
+    LifeTracker* life = nullptr;
+};
+
+/// Stage hit receipts, all target StatSets and optional life trackers, then
+/// publish them together without callbacks or allocations. A failed hit
+/// leaves every live owner and out unchanged. The caller orders simultaneous
+/// hits and owns action state, Entity events, external effects and persistence.
+Result<void> settleBatch(std::span<const CombatBatchHit> hits,
+    std::span<const CombatBatchTarget> targets,
+    const RelationTable& relations, HitLedger& ledger,
+    std::vector<CombatOutcome>& out, const RuleRegistry* rules = nullptr);
+
 } // namespace ayt::combat
