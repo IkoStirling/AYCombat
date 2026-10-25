@@ -24,6 +24,8 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
 /// Advance one ordinary 2D action path and its 1..64 low-level Combat hits
 /// at one serialized simulation boundary. A missing/invalid mapping or failed
 /// Combat batch leaves action time, StatSets, life, ledger and out unchanged.
+/// For multiple authored hit windows, the game maps ActionStep2D::hitWindow
+/// to HitRequest::segment under a Segment-scope attack and uses unique requests.
 /// Zero action hits advance the action only. Combat hits retain ActionStep2D
 /// order; the game owns target identity mapping, World/Entity effects and
 /// persistence.

@@ -18,7 +18,7 @@ namespace ayt::combat {
 /// One completed ordinary 2D action hit and its individual Combat result.
 /// Results are ordered like ActionStep2D::hits; a later failure does not undo
 /// earlier settlements. The action runtime already deduplicates each target
-/// within one cycle, so callers must dispatch a completed step only once.
+/// within one authored hit window, so callers must dispatch a completed step only once.
 struct Action2DSettlement {
     std::uint64_t targetId = 0;
     std::uint32_t hitBox = 0;
@@ -54,7 +54,7 @@ template<class ResolveTarget>
 }
 
 /// Bounded ordinary 2D action-to-Combat settlement receipts. Retrying the
-/// same source handle, action cycle and target returns the original result
+/// same source handle, action cycle, hit window and target returns the original result
 /// without applying damage again, including an original missing-target or
 /// denied result. A changed box, damage or recipe for that receipt is rejected.
 /// Keep this beside one live World and clear it on World replacement/restore;
@@ -80,7 +80,8 @@ public:
             if (!hit.target || !targets.insert(hit.target).second)
                 return std::unexpected(Diagnostic{Error::Invalid,
                     "2D action step contains duplicate or empty targets", {}});
-            const Key key{source.id, source.version, step.cycle, hit.target};
+            const Key key{source.id, source.version, step.cycle,
+                          step.hitWindow, hit.target};
             if (const auto found = _receipts.find(key); found != _receipts.end()) {
                 if (found->second.hitBox != hit.hitBox
                     || found->second.damage != damage
@@ -99,7 +100,8 @@ public:
         settled.reserve(step.hits.size());
         _receipts.merge(pending); // All receipt nodes exist before any Combat mutation.
         for (const auto& hit : step.hits) {
-            const Key key{source.id, source.version, step.cycle, hit.target};
+            const Key key{source.id, source.version, step.cycle,
+                          step.hitWindow, hit.target};
             auto& receipt = _receipts.at(key);
             if (!receipt.result) {
                 try {
@@ -136,7 +138,7 @@ public:
 
 private:
     using Key = std::tuple<std::uint32_t, std::uint32_t,
-                           std::uint64_t, std::uint64_t>;
+                           std::uint64_t, std::uint32_t, std::uint64_t>;
     struct Receipt {
         std::uint32_t hitBox;
         ayt::stats::Value damage;

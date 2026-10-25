@@ -186,6 +186,47 @@ TEST_CASE(action_path_batch_without_hit_advances_only_action) {
         && output.combat.empty() && book.retainedRequests() == 0);
 }
 
+TEST_CASE(authored_action_windows_settle_as_distinct_combat_segments) {
+    ayt::ay2d::ActionFrame2D first;
+    first.hitBoxes = {{0.0f, 0.0f, 1.0f, 1.0f}};
+    auto second = first;
+    second.resetHitsOnEnter = true;
+    ayt::ay2d::ActionLibrary2D clips{{{"double", {first, second}, false}}};
+    ayt::ay2d::ActionRuntime2D action(clips);
+    auto health = stats();
+    auto book = ledger({HitScope::Segment});
+    const auto formula = plan();
+    const std::array<ayt::stats::Value, 1> amount{20};
+    const std::array<CombatBatchTarget, 1> combatTargets{{
+        {actor(2), &health, nullptr}}};
+    const std::vector<ayt::ay2d::ActionPathPoint2D> path{
+        {0.0f, {0.0f, 0.0f}}, {1.0f, {0.0f, 0.0f}}};
+    const std::vector<ayt::ay2d::ActionTarget2D> targets{
+        {2, {{0.25f, 0.25f, 0.75f, 0.75f}}, true}};
+    std::uint64_t tick = 0;
+    const ActionCombatHit2DFactory makeHit = [&](const ayt::ay2d::ActionHit2D& hit,
+        const ayt::ay2d::ActionStep2D& step) -> Result<CombatBatchHit> {
+        auto req = request(tick + 1, health);
+        req.hit.target = actor(hit.target);
+        req.hit.tick = tick;
+        req.hit.segment = step.hitWindow;
+        req.calculation.tick = tick;
+        return CombatBatchHit{req, &formula, amount};
+    };
+    ActionCombatBatch2DResult output;
+    CHECK_TRUE(stepAndSettleActionPath2D(action, tick, {"double", true},
+        path, targets, {}, makeHit, combatTargets, relations(), book,
+        output).has_value());
+    CHECK_TRUE(output.action.hitWindow == 0 && output.action.hits.size() == 1
+        && health.read(ayt::stats::statId("health"))->current == 80);
+    tick = 1;
+    CHECK_TRUE(stepAndSettleActionPath2D(action, tick, {}, path, targets, {},
+        makeHit, combatTargets, relations(), book, output).has_value());
+    CHECK_TRUE(output.action.hitWindow == 1 && output.action.hits.size() == 1
+        && health.read(ayt::stats::statId("health"))->current == 60
+        && book.retainedRequests() == 2);
+}
+
 TEST_CASE(action_group_and_combat_batch_reject_second_hit_without_partial_trade) {
     ayt::ay2d::ActionFrame2D strike;
     strike.hitBoxes = {{0.2f, -0.2f, 1.0f, 0.2f}};

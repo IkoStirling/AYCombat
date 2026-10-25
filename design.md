@@ -278,12 +278,18 @@ missing target into a late hit. Previously successful targets remain committed
 when a later target fails; this is not an atomic batch. Caller-controlled pruning
 is safe only after retries for older cycles have ended. World replacement/restore
 requires clearing the ledger because Combat runtime state is not checkpointed.
+The receipt key includes the authored hit-window ordinal inside each action
+cycle, so a repeated delivery in one window reuses its result while a new
+window may apply another hit to the same target.
 
 The optional header-only `stepAndSettleActionPath2D` uses a copy of one
 `ActionRuntime2D` to compute its path hit facts, including optional static
 blockers. A pure game mapper supplies one borrowed low-level `CombatBatchHit`
 per action hit, in that order. It verifies the common action tick, then calls
 `settleBatch` on live Stats/ledger owners. Combat stages those value states;
+for multiple authored hit windows under one attack ID, the mapper must use
+`HitScope::Segment` and copy `ActionStep2D::hitWindow` to `HitRequest::segment`
+while retaining unique request IDs.
 only after successful publication does the adapter move-assign the action
 candidate and output through statically checked no-throw operations. Mapping,
 action or Combat failure therefore leaves all live owners unchanged. No-hit

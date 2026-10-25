@@ -106,6 +106,25 @@ TEST_CASE(two_dimensional_action_receipts_prevent_retry_damage_and_reject_change
     receipts.forgetBefore(f.source, 8);
     CHECK_INT_EQ(receipts.size(), 0u);
 }
+TEST_CASE(two_dimensional_action_receipts_allow_new_authored_hit_window) {
+    GameplayFixture f;
+    Action2DCombatReceipts receipts(2);
+    ayt::ay2d::ActionStep2D step;
+    step.active = true;
+    step.cycle = 4;
+    step.hits = {{11, 0}};
+    auto resolve = [&](std::uint64_t)
+        -> std::optional<ayt::entity::EntityHandle> { return f.target; };
+    CHECK_TRUE(receipts.settle(*f.combat, f.source, step, resolve, 20).has_value());
+    CHECK_INT_EQ(f.hp(), 80);
+    step.hitWindow = 1;
+    auto second = receipts.settle(*f.combat, f.source, step, resolve, 20);
+    CHECK_TRUE(second.has_value());
+    CHECK_INT_EQ(f.hp(), 60);
+    CHECK_TRUE(receipts.settle(*f.combat, f.source, step, resolve, 20).has_value());
+    CHECK_INT_EQ(f.hp(), 60);
+    CHECK_INT_EQ(receipts.size(), 2u);
+}
 TEST_CASE(two_dimensional_action_receipt_capacity_rejects_before_any_damage) {
     GameplayFixture f;
     Action2DCombatReceipts receipts(1);
