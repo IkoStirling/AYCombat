@@ -279,6 +279,21 @@ when a later target fails; this is not an atomic batch. Caller-controlled prunin
 is safe only after retries for older cycles have ended. World replacement/restore
 requires clearing the ledger because Combat runtime state is not checkpointed.
 
+The optional header-only `stepAndSettleActionPath2D` uses a copy of one
+`ActionRuntime2D` to compute its path hit facts, including optional static
+blockers. A pure game mapper supplies one borrowed low-level `CombatBatchHit`
+per action hit, in that order. It verifies the common action tick, then calls
+`settleBatch` on live Stats/ledger owners. Combat stages those value states;
+only after successful publication does the adapter move-assign the action
+candidate and output through statically checked no-throw operations. Mapping,
+action or Combat failure therefore leaves all live owners unchanged. No-hit
+steps publish action alone. `stepAndSettleActionGroup2D` applies the same
+boundary to 1..64 copied actor runtimes: it rewires a temporary actor list to
+those copies, runs `stepActionGroup2D`, maps at most 64 total hits in ascending
+source actor ID and per-source hit order, then publishes the live runtimes
+only after the shared Combat batch succeeds. Caller callbacks must be pure.
+Neither route includes Entity callbacks, World side effects or persistence.
+
 ## 3D area candidate boundary (2026-10-24)
 
 Physics3DArea is an optional Entity/Jolt adapter. It samples the source

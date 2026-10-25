@@ -2,6 +2,9 @@
 #include <AYCombat/StatsIntegration.h>
 #include "Fixtures.h"
 #include <array>
+#ifdef AY_COMBAT_WITH_AY2D
+#include <AYCombat/Action2DBatch.h>
+#endif
 
 namespace {
 ayt::stats::StatSet stats() {
@@ -100,6 +103,149 @@ TEST_CASE(batch_rebases_same_target_hits_on_staged_versions_in_caller_order) {
         && outcomes[1].settlement.changes[0].actual == -20
         && outcomes[1].settlement.changes[0].excess == 60);
 }
+
+#ifdef AY_COMBAT_WITH_AY2D
+TEST_CASE(action_path_and_combat_batch_publish_together_or_not_at_all) {
+    ayt::ay2d::ActionFrame2D strike;
+    strike.hitBoxes = {{0.0f, 0.0f, 1.0f, 1.0f}};
+    ayt::ay2d::ActionLibrary2D clips{{{"strike", {strike}, true}}};
+    ayt::ay2d::ActionRuntime2D action(clips);
+    const std::vector<ayt::ay2d::ActionPathPoint2D> path{
+        {0.0f, {0.0f, 0.0f}}, {1.0f, {10.0f, 0.0f}}};
+    const std::vector<ayt::ay2d::ActionTarget2D> actionTargets{
+        {11, {{3.0f, 0.0f, 4.0f, 1.0f}}, true},
+        {12, {{7.0f, 0.0f, 8.0f, 1.0f}}, true}};
+    auto first = stats(), second = stats();
+    const std::array<CombatBatchTarget, 2> combatTargets{{
+        {actor(2), &first, nullptr}, {actor(3), &second, nullptr}}};
+    auto book = ledger();
+    const auto table = relations();
+    const auto formula = plan();
+    const std::array<ayt::stats::Value, 1> amount{20};
+    bool invalidSecond = true;
+    const ActionCombatHit2DFactory makeHit = [&](const ayt::ay2d::ActionHit2D& hit,
+        const ayt::ay2d::ActionStep2D&) -> Result<CombatBatchHit> {
+        auto req = request(hit.target == 11 ? 1 : 2,
+                           hit.target == 11 ? first : second);
+        if (hit.target == 12) {
+            req.hit.target = actor(3);
+            req.target.ref = actor(3);
+            if (invalidSecond) req.resource = ayt::stats::statId("missing");
+        }
+        return CombatBatchHit{req, &formula, amount};
+    };
+    ActionCombatBatch2DResult output;
+    output.action.clip = "unchanged";
+    CHECK_TRUE(!stepAndSettleActionPath2D(action, 0, {"strike", true},
+        path, actionTargets, {}, makeHit, combatTargets, table, book,
+        output).has_value());
+    CHECK_TRUE(action.state().nextTick == 0
+        && first.read(ayt::stats::statId("health"))->current == 100
+        && second.read(ayt::stats::statId("health"))->current == 100
+        && book.retainedRequests() == 0
+        && output.action.clip == "unchanged"
+        && output.combat.empty());
+
+    const ActionCombatHit2DFactory wrongTick = [&](const ayt::ay2d::ActionHit2D& hit,
+        const ayt::ay2d::ActionStep2D& step) -> Result<CombatBatchHit> {
+        auto bound = makeHit(hit, step);
+        bound->request.hit.tick = 1;
+        return bound;
+    };
+    CHECK_TRUE(!stepAndSettleActionPath2D(action, 0, {"strike", true},
+        path, actionTargets, {}, wrongTick, combatTargets, table, book,
+        output).has_value());
+    CHECK_TRUE(action.state().nextTick == 0
+        && book.retainedRequests() == 0
+        && output.action.clip == "unchanged");
+
+    invalidSecond = false;
+    CHECK_TRUE(stepAndSettleActionPath2D(action, 0, {"strike", true},
+        path, actionTargets, {}, makeHit, combatTargets, table, book,
+        output).has_value());
+    CHECK_TRUE(action.state().nextTick == 1
+        && output.action.hits.size() == 2
+        && output.combat.size() == 2
+        && first.read(ayt::stats::statId("health"))->current == 80
+        && second.read(ayt::stats::statId("health"))->current == 80
+        && book.retainedRequests() == 2);
+}
+
+TEST_CASE(action_path_batch_without_hit_advances_only_action) {
+    ayt::ay2d::ActionFrame2D strike;
+    strike.hitBoxes = {{0.0f, 0.0f, 1.0f, 1.0f}};
+    ayt::ay2d::ActionLibrary2D clips{{{"strike", {strike}, true}}};
+    ayt::ay2d::ActionRuntime2D action(clips);
+    auto book = ledger();
+    ActionCombatBatch2DResult output;
+    CHECK_TRUE(stepAndSettleActionPath2D(action, 0, {"strike", true},
+        {{0.0f, {0.0f, 0.0f}}, {1.0f, {0.0f, 0.0f}}},
+        {}, {}, {}, {}, relations(), book, output).has_value());
+    CHECK_TRUE(action.state().nextTick == 1
+        && output.action.active && output.action.hits.empty()
+        && output.combat.empty() && book.retainedRequests() == 0);
+}
+
+TEST_CASE(action_group_and_combat_batch_reject_second_hit_without_partial_trade) {
+    ayt::ay2d::ActionFrame2D strike;
+    strike.hitBoxes = {{0.2f, -0.2f, 1.0f, 0.2f}};
+    strike.hurtBoxes = {{-0.2f, -0.5f, 0.2f, 0.5f}};
+    ayt::ay2d::ActionLibrary2D clips{{{"strike", {strike}, true}}};
+    ayt::ay2d::ActionRuntime2D left(clips), right(clips);
+    const std::vector<ayt::ay2d::ActionActor2D> actors{
+        {1, &left, {"strike", true}, 0.0f, 0.0f},
+        {2, &right, {"strike", false}, 0.6f, 0.0f}};
+    auto leftHealth = stats(), rightHealth = stats();
+    const std::array<CombatBatchTarget, 2> targets{{
+        {actor(1), &leftHealth, nullptr},
+        {actor(2), &rightHealth, nullptr}}};
+    auto book = ledger();
+    CHECK_TRUE(book.open({1, 2}, {}, 0, 100).has_value());
+    auto table = relations();
+    CHECK_TRUE(table.set(20, 10, Relation::Hostile).has_value());
+    const auto formula = plan();
+    const std::array<ayt::stats::Value, 1> amount{20};
+    bool invalidSecond = true;
+    const ActionCombatGroupHit2DFactory makeHit =
+        [&](std::uint64_t sourceId, const ayt::ay2d::ActionHit2D& actionHit,
+            const ayt::ay2d::ActionStep2D&) -> Result<CombatBatchHit> {
+        const auto& targetState = actionHit.target == 1 ? leftHealth : rightHealth;
+        auto req = request(100 + sourceId, targetState);
+        req.hit.attack = {1, sourceId};
+        req.hit.target = actor(actionHit.target);
+        req.source.instigator = actor(sourceId);
+        req.source.team = sourceId == 1 ? 10 : 20;
+        req.target.ref = actor(actionHit.target);
+        req.target.team = sourceId == 1 ? 20 : 10;
+        if (sourceId == 2 && invalidSecond)
+            req.resource = ayt::stats::statId("missing");
+        return CombatBatchHit{req, &formula, amount};
+    };
+    ActionCombatGroup2DResult output;
+    output.actions.resize(1);
+    output.actions.front().clip = "unchanged";
+    CHECK_TRUE(!stepAndSettleActionGroup2D(0, actors, {}, {}, makeHit,
+        targets, table, book, output).has_value());
+    CHECK_TRUE(left.state().nextTick == 0 && right.state().nextTick == 0
+        && leftHealth.read(ayt::stats::statId("health"))->current == 100
+        && rightHealth.read(ayt::stats::statId("health"))->current == 100
+        && book.retainedRequests() == 0
+        && output.actions.size() == 1
+        && output.actions.front().clip == "unchanged"
+        && output.combat.empty());
+
+    invalidSecond = false;
+    CHECK_TRUE(stepAndSettleActionGroup2D(0, actors, {}, {}, makeHit,
+        targets, table, book, output).has_value());
+    CHECK_TRUE(left.state().nextTick == 1 && right.state().nextTick == 1
+        && output.actions.size() == 2 && output.combat.size() == 2
+        && output.actions[0].hits.size() == 1
+        && output.actions[1].hits.size() == 1
+        && leftHealth.read(ayt::stats::statId("health"))->current == 80
+        && rightHealth.read(ayt::stats::statId("health"))->current == 80
+        && book.retainedRequests() == 2);
+}
+#endif
 
 TEST_CASE(one_hit_commits_armor_and_health_together) {
     auto state = armoredStats(); auto book = ledger(); auto r = request(1, state);
