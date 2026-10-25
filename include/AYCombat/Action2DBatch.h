@@ -26,6 +26,8 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
 /// Combat batch leaves action time, StatSets, life, ledger and out unchanged.
 /// For multiple authored hit windows, the game maps ActionStep2D::hitWindow
 /// to HitRequest::segment under a Segment-scope attack and uses unique requests.
+/// Optional fixed-shape moving blockers use the same actual path contract as
+/// ActionRuntime2D::stepPath and are staged with the action/combat candidate.
 /// Zero action hits advance the action only. Combat hits retain ActionStep2D
 /// order; the game owns target identity mapping, World/Entity effects and
 /// persistence.
@@ -35,6 +37,7 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
     const std::vector<ayt::ay2d::ActionPathPoint2D>& ownerPath,
     const std::vector<ayt::ay2d::ActionTarget2D>& actionTargets,
     std::span<const ayt::ay2d::ActionBox2D> blockers,
+    std::span<const ayt::ay2d::ActionMovingBlocker2D> movingBlockers,
     const ActionCombatHit2DFactory& makeHit,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
@@ -45,7 +48,7 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
         auto candidate = runtime;
         ayt::ay2d::ActionStep2D action;
         if (!candidate.stepPath(tick, input, ownerPath, actionTargets,
-                                action, blockers))
+                                action, blockers, movingBlockers))
             return std::unexpected(Diagnostic{Error::Invalid,
                 "2D action batch path or tick was rejected", {}});
         if (action.hits.size() > 64)
@@ -83,6 +86,22 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
     }
 }
 
+/// Compatibility overload for callers with only static blockers.
+[[nodiscard]] inline Result<void> stepAndSettleActionPath2D(
+    ayt::ay2d::ActionRuntime2D& runtime, std::uint64_t tick,
+    const ayt::ay2d::ActionInput2D& input,
+    const std::vector<ayt::ay2d::ActionPathPoint2D>& ownerPath,
+    const std::vector<ayt::ay2d::ActionTarget2D>& actionTargets,
+    std::span<const ayt::ay2d::ActionBox2D> blockers,
+    const ActionCombatHit2DFactory& makeHit,
+    std::span<const CombatBatchTarget> combatTargets,
+    const RelationTable& relations, HitLedger& ledger,
+    ActionCombatBatch2DResult& out, const RuleRegistry* rules = nullptr) {
+    return stepAndSettleActionPath2D(runtime, tick, input, ownerPath,
+        actionTargets, blockers, {}, makeHit, combatTargets, relations,
+        ledger, out, rules);
+}
+
 struct ActionCombatGroup2DResult {
     std::vector<ayt::ay2d::ActionStep2D> actions;
     std::vector<CombatOutcome> combat;
@@ -102,6 +121,7 @@ using ActionCombatGroupHit2DFactory = std::function<Result<CombatBatchHit>(
     std::uint64_t tick, const std::vector<ayt::ay2d::ActionActor2D>& actors,
     const std::function<bool(std::uint64_t, std::uint64_t)>& canHit,
     std::span<const ayt::ay2d::ActionBox2D> blockers,
+    std::span<const ayt::ay2d::ActionMovingBlocker2D> movingBlockers,
     const ActionCombatGroupHit2DFactory& makeHit,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
@@ -129,7 +149,7 @@ using ActionCombatGroupHit2DFactory = std::function<Result<CombatBatchHit>(
             stagedActors[i].runtime = &candidates[i];
         std::vector<ayt::ay2d::ActionStep2D> actions;
         if (!ayt::ay2d::stepActionGroup2D(tick, stagedActors, actions,
-                                          canHit, blockers))
+                                          canHit, blockers, movingBlockers))
             return std::unexpected(Diagnostic{Error::Invalid,
                 "2D action Combat group step was rejected", {}});
         std::size_t hitCount = 0;
@@ -172,6 +192,19 @@ using ActionCombatGroupHit2DFactory = std::function<Result<CombatBatchHit>(
         return std::unexpected(Diagnostic{Error::Invalid,
             "2D action Combat group callback threw", {}});
     }
+}
+
+/// Compatibility overload for callers with only static blockers.
+[[nodiscard]] inline Result<void> stepAndSettleActionGroup2D(
+    std::uint64_t tick, const std::vector<ayt::ay2d::ActionActor2D>& actors,
+    const std::function<bool(std::uint64_t, std::uint64_t)>& canHit,
+    std::span<const ayt::ay2d::ActionBox2D> blockers,
+    const ActionCombatGroupHit2DFactory& makeHit,
+    std::span<const CombatBatchTarget> combatTargets,
+    const RelationTable& relations, HitLedger& ledger,
+    ActionCombatGroup2DResult& out, const RuleRegistry* rules = nullptr) {
+    return stepAndSettleActionGroup2D(tick, actors, canHit, blockers, {},
+        makeHit, combatTargets, relations, ledger, out, rules);
 }
 
 } // namespace ayt::combat

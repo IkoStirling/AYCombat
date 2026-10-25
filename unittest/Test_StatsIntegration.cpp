@@ -186,6 +186,45 @@ TEST_CASE(action_path_batch_without_hit_advances_only_action) {
         && output.combat.empty() && book.retainedRequests() == 0);
 }
 
+TEST_CASE(moving_blocker_culls_late_action_combat_hit_in_one_batch) {
+    ayt::ay2d::ActionFrame2D strike;
+    strike.hitBoxes = {{0.0f, 0.0f, 1.0f, 1.0f}};
+    ayt::ay2d::ActionLibrary2D clips{{{"strike", {strike}, false}}};
+    ayt::ay2d::ActionRuntime2D action(clips);
+    const std::vector<ayt::ay2d::ActionPathPoint2D> path{
+        {0.0f, {0.0f, 0.0f}}, {1.0f, {10.0f, 0.0f}}};
+    const std::vector<ayt::ay2d::ActionTarget2D> actionTargets{
+        {2, {{3.0f, 0.0f, 4.0f, 1.0f}}, true},
+        {3, {{8.0f, 0.0f, 9.0f, 1.0f}}, true}};
+    const std::array<ayt::ay2d::ActionMovingBlocker2D, 1> closing{{
+        {{20.0f, 0.0f, 20.5f, 1.0f},
+         {{0.0f, {20.0f, 0.0f}}, {0.5f, {5.0f, 0.0f}},
+          {1.0f, {20.0f, 0.0f}}}}}};
+    auto nearHealth = stats(), farHealth = stats();
+    const std::array<CombatBatchTarget, 2> targets{{
+        {actor(2), &nearHealth, nullptr}, {actor(3), &farHealth, nullptr}}};
+    auto book = ledger();
+    const auto formula = plan();
+    const std::array<ayt::stats::Value, 1> amount{20};
+    const ActionCombatHit2DFactory makeHit = [&](const ayt::ay2d::ActionHit2D& hit,
+        const ayt::ay2d::ActionStep2D&) -> Result<CombatBatchHit> {
+        auto& health = hit.target == 2 ? nearHealth : farHealth;
+        auto req = request(hit.target, health);
+        req.hit.target = actor(hit.target);
+        req.target.ref = actor(hit.target);
+        return CombatBatchHit{req, &formula, amount};
+    };
+    ActionCombatBatch2DResult output;
+    CHECK_TRUE(stepAndSettleActionPath2D(action, 0, {"strike", true},
+        path, actionTargets, {}, closing, makeHit, targets, relations(),
+        book, output).has_value());
+    CHECK_TRUE(action.state().nextTick == 1 && output.action.hits.size() == 1
+        && output.action.hits[0].target == 2 && output.combat.size() == 1
+        && nearHealth.read(ayt::stats::statId("health"))->current == 80
+        && farHealth.read(ayt::stats::statId("health"))->current == 100
+        && book.retainedRequests() == 1);
+}
+
 TEST_CASE(authored_action_windows_settle_as_distinct_combat_segments) {
     ayt::ay2d::ActionFrame2D first;
     first.hitBoxes = {{0.0f, 0.0f, 1.0f, 1.0f}};
@@ -276,7 +315,10 @@ TEST_CASE(action_group_and_combat_batch_reject_second_hit_without_partial_trade)
         && output.combat.empty());
 
     invalidSecond = false;
-    CHECK_TRUE(stepAndSettleActionGroup2D(0, actors, {}, {}, makeHit,
+    const std::array<ayt::ay2d::ActionMovingBlocker2D, 1> farBlocker{{
+        {{10.0f, 10.0f, 11.0f, 11.0f},
+         {{0.0f, {10.0f, 10.0f}}, {1.0f, {10.0f, 10.0f}}}}}};
+    CHECK_TRUE(stepAndSettleActionGroup2D(0, actors, {}, {}, farBlocker, makeHit,
         targets, table, book, output).has_value());
     CHECK_TRUE(left.state().nextTick == 1 && right.state().nextTick == 1
         && output.actions.size() == 2 && output.combat.size() == 2

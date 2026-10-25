@@ -299,6 +299,11 @@ those copies, runs `stepActionGroup2D`, maps at most 64 total hits in ascending
 source actor ID and per-source hit order, then publishes the live runtimes
 only after the shared Combat batch succeeds. Caller callbacks must be pure.
 Neither route includes Entity callbacks, World side effects or persistence.
+Both routes can forward the action runtime's optional fixed-shape moving
+blockers. Their piecewise paths are validated while actions are still staged;
+blocked hits never enter the Combat batch, and invalid paths leave every live
+action and numerical state unchanged. Static-only overloads retain the old
+call shape.
 
 ## 3D area candidate boundary (2026-10-24)
 
