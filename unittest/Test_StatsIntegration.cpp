@@ -371,6 +371,73 @@ TEST_CASE(one_hit_commits_armor_and_health_together) {
         == Error::Duplicate);
 }
 
+TEST_CASE(part_armor_route_absorbs_then_exposes_health_without_replay) {
+    auto state = armoredStats(); auto book = ledger(); auto r = request(1, state);
+    r.hit.part = 7;
+    const PartArmorRoute route{7, ayt::stats::statId("health"),
+        ayt::stats::statId("armor"), 7500};
+    const auto preview = planPartArmorHit(r, state, route, 80).value();
+    CHECK_TRUE(preview.absorbed == 50 && preview.healthDamage == 30
+        && preview.mutationCount == 2);
+    CHECK_TRUE(state.read(route.armor)->current == 50
+        && state.read(route.health)->current == 100
+        && book.retainedRequests() == 0);
+    const auto outcome = settlePartArmorHit(r, relations(), book, state,
+        route, 80).value();
+    CHECK_TRUE(outcome.state == OutcomeState::Applied && outcome.part == 7
+        && outcome.calculated == 30 && outcome.settlement.changes.size() == 2);
+    CHECK_TRUE(state.read(route.armor)->current == 0
+        && state.read(route.health)->current == 70);
+    r.expectedVersion = state.version();
+    CHECK_TRUE(settlePartArmorHit(r, relations(), book, state, route, 80)
+        .error().code == Error::Duplicate);
+    CHECK_TRUE(state.read(route.health)->current == 70);
+}
+
+TEST_CASE(part_armor_route_rejects_stale_and_invalid_without_reservation) {
+    auto state = armoredStats(); auto book = ledger(); auto r = request(1, state);
+    r.hit.part = 2;
+    PartArmorRoute route{2, ayt::stats::statId("health"),
+        ayt::stats::statId("armor"), 5000};
+    const auto version = state.version();
+    CHECK_TRUE(settlePartArmorHit(r, relations(), book, state,
+        route, -1).error().code == Error::Invalid);
+    route.part = 3;
+    CHECK_TRUE(settlePartArmorHit(r, relations(), book, state,
+        route, 30).error().code == Error::Invalid);
+    route.part = 2; route.absorptionBasisPoints = 10001;
+    CHECK_TRUE(settlePartArmorHit(r, relations(), book, state,
+        route, 30).error().code == Error::Invalid);
+    route.absorptionBasisPoints = 5000;
+    r.expectedVersion = version + 1;
+    CHECK_TRUE(settlePartArmorHit(r, relations(), book, state,
+        route, 30).error().code == Error::Stale);
+    CHECK_TRUE(state.version() == version && book.retainedRequests() == 0
+        && state.read(route.armor)->current == 50);
+    r.expectedVersion = version;
+    CHECK_TRUE(settlePartArmorHit(r, relations(), book, state,
+        route, 30).has_value());
+    CHECK_TRUE(state.read(route.armor)->current == 35
+        && state.read(route.health)->current == 85);
+}
+
+TEST_CASE(unarmored_part_routes_all_damage_to_one_health_pool) {
+    auto state = armoredStats(); auto book = ledger(); auto r = request(1, state);
+    r.hit.part = 4;
+    const PartArmorRoute route{4, ayt::stats::statId("health"), 0, 0};
+    const auto planned = planPartArmorHit(r, state, route, 13).value();
+    CHECK_TRUE(planned.mutationCount == 1 && planned.absorbed == 0
+        && planned.healthDamage == 13);
+    LifeTracker life({route.health, LifePhase::Dead});
+    const auto outcome = settlePartArmorHit(r, relations(), book, state,
+        route, 13, {.life=&life}).value();
+    CHECK_TRUE(outcome.kind == OutcomeKind::Damage
+        && outcome.settlement.changes.size() == 1
+        && state.read(route.health)->current == 87
+        && state.read(ayt::stats::statId("armor"))->current == 50
+        && life.phase() == LifePhase::Alive);
+}
+
 TEST_CASE(invalid_second_pool_keeps_first_pool_and_hit_retryable) {
     auto state = armoredStats(); auto book = ledger(); const auto r = request(1, state);
     const std::array<ayt::stats::Mutation, 2> invalid{{

@@ -25,6 +25,14 @@ failed numerical candidate releases the allowance; success retains the
 complete multi-pool Settlement, with life observed from its final resource
 change. Armor coverage, penetration and damage formulas remain game data;
 other actors and Inventory durability are not included in this commit.
+The optional `PartArmorRoute` reduces repeated per-game glue for one mapped
+part/armor pair. It validates part, persistent pool identities and target
+version before forming one or two nonnegative Decrease mutations. Desired
+absorption is the integer floor of incoming damage times the game-supplied
+basis-point rate, capped at current armor; health receives the remainder.
+`settlePartArmorHit` delegates to `settleResources`, so a stale/invalid plan
+reserves no hit and a successful commit advances both pools with one receipt.
+Games retain collider mapping, material/penetration and equipment ownership.
 `settleBatch` is a separate low-level owner boundary for 1..64 ordered hits
 across up to 64 target StatSets. It copies the HitLedger, each numerical state
 and optional LifeTracker, runs ordinary settlement on the shadows, then uses

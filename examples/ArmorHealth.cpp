@@ -25,15 +25,16 @@ int main() {
         .target = {victim, 2, mask(Capability::Damageable)},
         .resource = stats::statId("health"), .expectedVersion = state->version(),
         .calculation = {.seed=7, .calculation=1, .hit=1}};
-    // The game's coverage rule has divided this hit into two pool changes.
-    const std::array<stats::Mutation, 2> changes{{
-        {stats::statId("armor"), stats::MutationOp::Decrease, 20},
-        {stats::statId("health"), stats::MutationOp::Decrease, 10}}};
-    auto outcome = settleResources(request, relations, ledger, *state, changes);
+    request.hit.part = 1;
+    // The game maps the collider to part 1 and authors the 50% absorption rate.
+    const PartArmorRoute route{1, stats::statId("health"),
+        stats::statId("armor"), 5000};
+    auto outcome = settlePartArmorHit(request, relations, ledger, *state,
+        route, 30);
     if (!outcome || outcome->state != OutcomeState::Applied) return 1;
     const auto armor = state->read(stats::statId("armor"));
     const auto health = state->read(stats::statId("health"));
-    if (!armor || !health || armor->current != 20 || health->current != 90)
+    if (!armor || !health || armor->current != 25 || health->current != 85)
         return 1;
     std::cout << "one hit: armor=" << armor->current
               << " health=" << health->current << '\n';

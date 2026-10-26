@@ -2,6 +2,7 @@
 #include <AYCombat/HitLedger.h>
 #include <AYCombat/Rules.h>
 #include <AYStats/Calculation.h>
+#include <array>
 #include <functional>
 
 namespace ayt::combat {
@@ -128,6 +129,37 @@ Result<CombatOutcome> settleResources(const SettlementRequest& request,
     ayt::stats::StatSet& targetState,
     std::span<const ayt::stats::Mutation> mutations,
     SettlementOptions options = {});
+
+/// Optional deterministic routing of one part hit through one persistent armor
+/// pool and its health pool. The game resolves collider -> part and chooses the
+/// absorption rate from its material, ammunition and coverage rules. No random
+/// coverage, penetration geometry or Inventory durability is inferred here.
+struct PartArmorRoute {
+    std::uint32_t part = 0;
+    ayt::stats::StatId health = 0;
+    ayt::stats::StatId armor = 0; // zero means unarmored
+    ayt::stats::Value absorptionBasisPoints = 0; // 0..10000
+};
+struct PartArmorPlan {
+    ayt::stats::Value incoming = 0, absorbed = 0, healthDamage = 0;
+    std::array<ayt::stats::Mutation, 2> mutations{};
+    std::size_t mutationCount = 0;
+    [[nodiscard]] std::span<const ayt::stats::Mutation> changes() const noexcept {
+        return {mutations.data(), mutationCount};
+    }
+};
+/// Pure, version-bound preview. Armor absorbs floor(incoming * rate / 10000),
+/// capped by its current value; unabsorbed damage reaches health. Errors leave
+/// the caller's plan unchanged. Use settlePartArmorHit for one receipt/commit.
+Result<PartArmorPlan> planPartArmorHit(const SettlementRequest& request,
+    const ayt::stats::StatSet& targetState, const PartArmorRoute& route,
+    ayt::stats::Value incoming);
+/// One accepted hit publishes both pools atomically through settleResources.
+/// A stale/invalid route or numeric failure consumes no hit allowance.
+Result<CombatOutcome> settlePartArmorHit(const SettlementRequest& request,
+    const RelationTable& relations, HitLedger& ledger,
+    ayt::stats::StatSet& targetState, const PartArmorRoute& route,
+    ayt::stats::Value incoming, SettlementOptions options = {});
 
 /// One ordered hit in a 1..64-hit same-domain fixed-tick batch. Inputs and plan are
 /// borrowed for the call. Every request carries the target's live version

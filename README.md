@@ -16,6 +16,12 @@ and pass nonnegative mutations; Combat validates direction and pool identity,
 reserves one hit receipt, then publishes all resource changes or none. The
 outcome retains every Stats change and optional life transition. See
 `AYCombat_ArmorHealthExample` and `CombatStatsIntegrationTests`.
+For a common one-part armor route, `planPartArmorHit` previews a deterministic
+split and `settlePartArmorHit` publishes it through the same hit receipt and
+atomic Stats commit. The game maps the collider to a part and supplies a
+0..10000 absorption rate; armor absorbs at most its current pool, with the
+remainder applied to health. The helper does not infer penetration geometry,
+coverage probability, equipment durability or medical rules.
 `settleBatch` stages 1..64 ordered hits against up to 64 caller-owned
 `StatSet` targets, optional life trackers and a copied HitLedger. It publishes
 all numerical states and receipts only after every hit succeeds. Repeated

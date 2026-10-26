@@ -220,6 +220,59 @@ Result<CombatOutcome> settleResources(const SettlementRequest& request,
     return outcome;
 }
 
+Result<PartArmorPlan> planPartArmorHit(const SettlementRequest& request,
+    const ayt::stats::StatSet& targetState, const PartArmorRoute& route,
+    ayt::stats::Value incoming) {
+    using namespace ayt::stats;
+    if (request.filter.operation != Operation::Damage || request.hit.part != route.part
+        || !route.health || request.resource != route.health
+        || route.armor == route.health || incoming < 0
+        || route.absorptionBasisPoints < 0
+        || route.absorptionBasisPoints > RateScale)
+        return fail(Error::Invalid, "invalid part/armor damage route");
+    if (request.expectedVersion != targetState.version())
+        return fail(Error::Stale, "target numerical state changed");
+    const auto healthIndex = targetState.schema()->index(route.health);
+    if (!healthIndex) return fail(Error::Missing, "part health pool is missing");
+    const auto validPool = [&](std::size_t index) {
+        const auto& definition = targetState.schema()->definitions()[index];
+        return definition.shape == Shape::Pool
+            && definition.lifetime == Lifetime::Persistent;
+    };
+    if (!validPool(*healthIndex))
+        return fail(Error::Invalid, "part health must be a persistent pool");
+    PartArmorPlan plan;
+    plan.incoming = incoming;
+    if (route.armor) {
+        const auto armorIndex = targetState.schema()->index(route.armor);
+        if (!armorIndex) return fail(Error::Missing, "part armor pool is missing");
+        if (!validPool(*armorIndex))
+            return fail(Error::Invalid, "part armor must be a persistent pool");
+        const auto row = targetState.read(route.armor);
+        if (!row) return std::unexpected(numericError(row.error()));
+        const auto desired = multiplyDivide(incoming,
+            route.absorptionBasisPoints, RateScale);
+        if (!desired) return std::unexpected(numericError(desired.error()));
+        plan.absorbed = std::min(*desired, row->current);
+        plan.mutations[plan.mutationCount++] =
+            {route.armor, MutationOp::Decrease, plan.absorbed};
+    }
+    plan.healthDamage = incoming - plan.absorbed;
+    plan.mutations[plan.mutationCount++] =
+        {route.health, MutationOp::Decrease, plan.healthDamage};
+    return plan;
+}
+
+Result<CombatOutcome> settlePartArmorHit(const SettlementRequest& request,
+    const RelationTable& relations, HitLedger& ledger,
+    ayt::stats::StatSet& targetState, const PartArmorRoute& route,
+    ayt::stats::Value incoming, SettlementOptions options) {
+    auto plan = planPartArmorHit(request, targetState, route, incoming);
+    if (!plan) return std::unexpected(plan.error());
+    return settleResources(request, relations, ledger, targetState,
+        plan->changes(), options);
+}
+
 Result<void> settleBatch(std::span<const CombatBatchHit> hits,
     std::span<const CombatBatchTarget> targets,
     const RelationTable& relations, HitLedger& ledger,
