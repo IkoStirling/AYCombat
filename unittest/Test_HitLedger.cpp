@@ -3,6 +3,52 @@
 
 TEST_SUITE(CombatHitLedgerTests)
 
+TEST_CASE(quiescent_snapshot_round_trips_completed_retryable_and_retired_ids) {
+    auto book = ledger();
+    CHECK_TRUE(book.complete(book.reserve(hit()).value()));
+    auto second = hit(2); second.target = actor(3);
+    CHECK_TRUE(book.release(book.reserve(second).value()));
+    HitLedgerState saved;
+    CHECK_TRUE(book.snapshot(saved));
+    HitLedger restored;
+    CHECK_TRUE(restored.restore(saved));
+    CHECK_TRUE(restored.reserve(hit()).error().code == Error::Duplicate);
+    CHECK_TRUE(restored.complete(restored.reserve(second).value()));
+    CHECK_TRUE(restored.close({1, 1}).has_value());
+    HitLedgerState closed;
+    CHECK_TRUE(restored.snapshot(closed));
+    HitLedger reopened;
+    CHECK_TRUE(reopened.restore(closed));
+    CHECK_TRUE(reopened.open({1, 1}, {}, 0, 100).error().code == Error::Stale);
+    CHECK_TRUE(reopened.open({1, 2}, {}, 0, 100).has_value());
+}
+
+TEST_CASE(snapshot_rejects_pending_and_restore_rejects_forged_state) {
+    auto book = ledger();
+    const auto pending = book.reserve(hit()).value();
+    HitLedgerState unchanged;
+    unchanged.domainHighWater.emplace_back(99, 100);
+    CHECK_FALSE(book.snapshot(unchanged));
+    CHECK_TRUE(unchanged.domainHighWater.size() == 1
+        && unchanged.domainHighWater.front().first == 99);
+    CHECK_TRUE(book.complete(pending));
+    HitLedgerState saved;
+    CHECK_TRUE(book.snapshot(saved));
+    HitLedger target;
+    CHECK_TRUE(target.restore(saved));
+    auto invalid = saved;
+    invalid.attacks.front().records.front().target.generation = 0;
+    CHECK_FALSE(target.restore(invalid));
+    CHECK_TRUE(target.reserve(hit()).error().code == Error::Duplicate);
+    invalid = saved;
+    invalid.domainHighWater.front().second = 0;
+    CHECK_FALSE(target.restore(invalid));
+    invalid = saved;
+    invalid.attacks.front().records.push_back(invalid.attacks.front().records.front());
+    CHECK_FALSE(target.restore(invalid));
+    CHECK_TRUE(target.reserve(hit()).error().code == Error::Duplicate);
+}
+
 TEST_CASE(pending_hits_block_duplicate_requests_and_other_colliders) {
     auto book = ledger();
     const auto lease = book.reserve(hit()).value();

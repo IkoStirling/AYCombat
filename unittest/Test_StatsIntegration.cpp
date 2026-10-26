@@ -31,6 +31,20 @@ SettlementRequest request(std::uint64_t id, const ayt::stats::StatSet& state) {
 
 TEST_SUITE(CombatStatsIntegrationTests)
 
+TEST_CASE(life_tracker_snapshot_restores_sequence_without_changing_policy) {
+    LifeTracker life({ayt::stats::statId("health"), LifePhase::Dead});
+    CHECK_TRUE(life.observeCurrent(10, 0).has_value());
+    const auto saved = life.snapshot();
+    CHECK_TRUE(saved.phase == LifePhase::Dead && saved.sequence == 1);
+    LifeTracker restored(saved.policy);
+    CHECK_TRUE(restored.restore(saved));
+    CHECK_TRUE(restored.phase() == LifePhase::Dead && restored.sequence() == 1);
+    auto invalid = saved;
+    invalid.policy.healingRevives = true;
+    CHECK_FALSE(restored.restore(invalid));
+    CHECK_TRUE(restored.sequence() == 1);
+}
+
 TEST_CASE(batch_failure_keeps_all_target_stats_life_receipts_and_output) {
     auto first = stats(), second = stats();
     auto book = ledger();

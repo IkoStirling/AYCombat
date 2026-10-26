@@ -307,6 +307,28 @@ those copies, runs `stepActionGroup2D`, maps at most 64 total hits in ascending
 source actor ID and per-source hit order, then publishes the live runtimes
 only after the shared Combat batch succeeds. Caller callbacks must be pure.
 Neither route includes Entity callbacks, World side effects or persistence.
+The optional Host-owned `commitActionGroupWorld2D` wraps the group route in
+one saved candidate. It copies actors, targets, optional life trackers, the
+HitLedger, WorldStateLedger receipt table and DurableOutbox before stepping.
+The game supplies one operation fingerprint and a read-only generation
+preflight. Outcome notices use stable attack/request keys. Its save callback
+must write the complete candidate with any other game sections into one
+failure-atomic slot and must not reenter live owners. No live value moves
+before that callback accepts; afterward all moves/swaps are no-throw. Exact
+World receipt replay skips both stepping and saving; a changed fingerprint
+rejects. Failed delivery remains in the outbox and requires a receiver that
+deduplicates the key. This boundary does not publish Entity notifications or
+physical motion by itself.
+
+`HitLedger::snapshot/restore` retain completed/retryable requests and retired
+attack high-water IDs; a pending reservation cannot be captured. The version-1
+`Action2DWorldCandidate` JSON section is capped at 4 MiB and holds ordered
+actor IDs and ActionState2D values, target IDs and Stats checkpoints, optional
+life phase/sequence, ledger state, World receipts and outbox. Decode builds a
+separate validated value object using caller-supplied Stats schemas. The game
+then restores each ActionRuntime2D against its unchanged clip library and
+publishes all staged World bindings together. Neither this ordinary floating
+path nor the SaveGame section provides deterministic Session rollback.
 Both routes can forward the action runtime's optional fixed-shape moving
 blockers. Their piecewise paths are validated while actions are still staged;
 blocked hits never enter the Combat batch, and invalid paths leave every live

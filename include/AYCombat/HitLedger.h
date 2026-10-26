@@ -1,5 +1,6 @@
 #pragma once
 #include <AYCombat/Combat.h>
+#include <utility>
 
 namespace ayt::combat {
 
@@ -19,6 +20,27 @@ struct HitRequest {
 };
 struct Reservation { AttackRef attack; std::uint64_t request = 0, attempt = 0; };
 struct LedgerLimits { std::size_t domains = 64, attacks = 1024, requestsPerAttack = 4096; };
+
+/// Portable owner snapshot. Completed requests and retired attack high-water
+/// marks must be saved together with Combat/Action state in one game slot.
+/// Pending reservations are never durable; snapshot() refuses them.
+struct HitLedgerRecordState {
+    std::uint64_t request = 0, tick = 0, attempt = 0;
+    CombatantRef target;
+    std::uint32_t part = 0, segment = 0;
+    bool completed = false;
+};
+struct HitLedgerAttackState {
+    AttackRef ref;
+    HitPolicy policy;
+    std::uint64_t start = 0, end = 0, lastTick = 0;
+    std::vector<HitLedgerRecordState> records;
+};
+struct HitLedgerState {
+    LedgerLimits limits;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> domainHighWater;
+    std::vector<HitLedgerAttackState> attacks;
+};
 
 /// Single simulation owner. Completed request identities survive until attack close.
 /// Attack IDs increase within each domain; closing never makes an old attack reusable.
@@ -44,6 +66,12 @@ public:
     /// Copy an unpublished candidate for an owner-controlled atomic batch.
     /// The copy has no shared mutable storage with the live ledger.
     [[nodiscard]] HitLedger stagedCopy() const;
+    /// Capture only a quiescent ledger. A pending reservation makes this fail
+    /// without modifying out. Retryable records retain their attempt counter.
+    [[nodiscard]] bool snapshot(HitLedgerState& out) const;
+    /// Validate a saved snapshot before replacing this ledger. Failure leaves
+    /// the live ledger unchanged; caller owns file format and atomic slot save.
+    [[nodiscard]] bool restore(const HitLedgerState& state);
     std::size_t activeAttacks() const noexcept { return _attacks.size(); }
     std::size_t retainedRequests() const noexcept;
 private:

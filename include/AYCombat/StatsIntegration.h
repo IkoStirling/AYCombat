@@ -28,6 +28,11 @@ struct LifePolicy {
     LifePhase depleted = LifePhase::Dead;
     bool healingRevives = false;
 };
+struct LifeTrackerState {
+    LifePolicy policy;
+    LifePhase phase = LifePhase::Alive;
+    std::uint64_t sequence = 0;
+};
 /// Owner-held gameplay lifecycle, separate from Stats pool/effect lifetimes.
 /// Observe only committed changes. Policy explicitly chooses death/downed and revival.
 class LifeTracker {
@@ -36,6 +41,24 @@ public:
     const LifePolicy& policy() const noexcept { return _policy; }
     LifePhase phase() const noexcept { return _phase; }
     std::uint64_t sequence() const noexcept { return _sequence; }
+    /// The policy is authored content; a saved phase/sequence cannot silently
+    /// migrate to a different resource or depletion rule.
+    [[nodiscard]] LifeTrackerState snapshot() const noexcept {
+        return {_policy, _phase, _sequence};
+    }
+    [[nodiscard]] bool restore(const LifeTrackerState& state) noexcept {
+        if (state.policy.resource != _policy.resource
+            || state.policy.depleted != _policy.depleted
+            || state.policy.healingRevives != _policy.healingRevives
+            || (state.policy.depleted != LifePhase::Downed
+                && state.policy.depleted != LifePhase::Dead)
+            || (state.phase != LifePhase::Alive
+                && state.phase != LifePhase::Downed
+                && state.phase != LifePhase::Dead)) return false;
+        _phase = state.phase;
+        _sequence = state.sequence;
+        return true;
+    }
     /// Integrations observe final authoritative current even when settlement fields omit clamps.
     std::optional<LifeTransition> observeCurrent(ayt::stats::Value before, ayt::stats::Value after) noexcept;
     std::optional<LifeTransition> observe(const ayt::stats::Settlement& settlement) noexcept;

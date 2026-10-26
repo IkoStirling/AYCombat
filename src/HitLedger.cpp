@@ -1,6 +1,8 @@
 #include <AYCombat/HitLedger.h>
 #include <algorithm>
 #include <limits>
+#include <new>
+#include <set>
 
 namespace ayt::combat {
 Result<std::uint64_t> HitLedger::nextAttackId(std::uint64_t domain) const {
@@ -128,6 +130,97 @@ HitLedger HitLedger::stagedCopy() const {
     candidate._domains = _domains;
     candidate._attacks = _attacks;
     return candidate;
+}
+
+bool HitLedger::snapshot(HitLedgerState& out) const {
+    try {
+        HitLedgerState candidate;
+        candidate.limits = _limits;
+        candidate.domainHighWater.reserve(_domains.size());
+        candidate.attacks.reserve(_attacks.size());
+        for (const auto& domain : _domains)
+            candidate.domainHighWater.emplace_back(domain.id, domain.highWater);
+        for (const auto& attack : _attacks) {
+            HitLedgerAttackState saved;
+            saved.ref = attack.ref;
+            saved.policy = attack.policy;
+            saved.start = attack.start;
+            saved.end = attack.end;
+            saved.lastTick = attack.lastTick;
+            saved.records.reserve(attack.records.size());
+            for (const auto& record : attack.records) {
+                if (record.state == State::Pending) return false;
+                saved.records.push_back({record.request, record.tick,
+                    record.attempt, record.key.target, record.key.part,
+                    record.key.segment, record.state == State::Completed});
+            }
+            candidate.attacks.push_back(std::move(saved));
+        }
+        out = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+}
+
+bool HitLedger::restore(const HitLedgerState& state) {
+    const auto limits = state.limits;
+    if (!limits.domains || !limits.attacks || !limits.requestsPerAttack
+        || limits.domains > 65536 || limits.attacks > 65536
+        || limits.requestsPerAttack > 65536
+        || state.domainHighWater.size() > limits.domains
+        || state.attacks.size() > limits.attacks) return false;
+    try {
+        HitLedger candidate(limits);
+        candidate._domains.reserve(state.domainHighWater.size());
+        candidate._attacks.reserve(state.attacks.size());
+        std::set<std::uint64_t> seenDomains;
+        for (const auto& [id, highWater] : state.domainHighWater) {
+            if (!id || !highWater || !seenDomains.insert(id).second) return false;
+            candidate._domains.push_back({id, highWater});
+        }
+        std::set<AttackRef> seenAttacks;
+        for (const auto& saved : state.attacks) {
+            if (!saved.ref.valid() || saved.start >= saved.end
+                || saved.lastTick < saved.start || saved.lastTick >= saved.end
+                || saved.records.size() > limits.requestsPerAttack
+                || (saved.policy.scope != HitScope::Target
+                    && saved.policy.scope != HitScope::Part
+                    && saved.policy.scope != HitScope::Segment
+                    && saved.policy.scope != HitScope::Periodic)
+                || (saved.policy.scope == HitScope::Periodic
+                    ? !saved.policy.interval : saved.policy.interval != 0)
+                || !seenAttacks.insert(saved.ref).second)
+                return false;
+            const auto domain = std::find_if(candidate._domains.begin(),
+                candidate._domains.end(), [&](const Domain& entry) {
+                    return entry.id == saved.ref.domain;
+                });
+            if (domain == candidate._domains.end()
+                || saved.ref.id > domain->highWater) return false;
+            Attack attack{saved.ref, saved.policy, saved.start, saved.end,
+                          saved.lastTick, {}};
+            attack.records.reserve(saved.records.size());
+            std::set<std::uint64_t> seenRequests;
+            for (const auto& record : saved.records) {
+                if (!record.request || !record.attempt || !record.target.valid()
+                    || record.target.domain != saved.ref.domain
+                    || record.tick < saved.start || record.tick > saved.lastTick
+                    || (saved.policy.scope != HitScope::Part && record.part)
+                    || (saved.policy.scope != HitScope::Segment && record.segment)
+                    || !seenRequests.insert(record.request).second) return false;
+                attack.records.push_back({record.request, record.tick,
+                    {record.target, record.part, record.segment},
+                    record.completed ? State::Completed : State::Retryable,
+                    record.attempt});
+            }
+            candidate._attacks.push_back(std::move(attack));
+        }
+        *this = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
 }
 
 } // namespace ayt::combat
