@@ -311,7 +311,10 @@ than copying its authored definition table, validates every mapped hit's tick,
 Ability execution and authored segment, and restores that checkpoint if the
 read-only query or Combat batch fails. Combat publishes its value owners only
 after all hits succeed. The host remains responsible for geometry sampling,
-root motion, Entity side effects and save publication.
+root motion, Entity side effects and save publication. The expected-checkpoint
+overload rejects a timeline changed after the host prepared a previewed
+animation/physics frame. The convenience overload captures the checkpoint
+immediately for hosts without a preview.
 
 ## 3D area candidate boundary (2026-10-24)
 

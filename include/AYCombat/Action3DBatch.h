@@ -27,15 +27,21 @@ using ActionCombatHit3DFactory = std::function<Result<std::vector<CombatBatchHit
 /// restores the exact prior timeline checkpoint and leaves numerical state,
 /// hit ledger and out unchanged. This uses the timeline's pointer-free
 /// checkpoint rather than copying its authored definition table every tick.
+/// Pass the checkpoint taken before previewStep as expected to reject a
+/// timeline changed during animation/physics preparation.
 /// Physics query, root motion, Entity events and persistence remain host-owned.
 [[nodiscard]] inline Result<void> stepAndSettleFixedAction3D(
     ayt::ability::FixedActionTimeline& timeline, std::uint64_t tick,
+    const ayt::ability::FixedActionSnapshot& expected,
     const ActionCombatHit3DFactory& makeHits,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
     ActionCombatBatch3DResult& out, const RuleRegistry* rules = nullptr) {
     static_assert(std::is_nothrow_move_assignable_v<ayt::ability::FixedActionFrame>);
     const auto before = timeline.checkpoint();
+    if (before != expected)
+        return std::unexpected(Diagnostic{Error::Stale,
+            "3D action changed after preview", {}});
     const auto rollback = [&]() noexcept {
         // This is the unchanged, previously valid checkpoint of this timeline.
         return timeline.restore(before).has_value();
@@ -98,6 +104,17 @@ using ActionCombatHit3DFactory = std::function<Result<std::vector<CombatBatchHit
         return std::unexpected(Diagnostic{Error::Invalid,
             "3D action Combat hit query threw", {}});
     }
+}
+
+/// Convenience form for hosts that do not prepare a previewed frame.
+[[nodiscard]] inline Result<void> stepAndSettleFixedAction3D(
+    ayt::ability::FixedActionTimeline& timeline, std::uint64_t tick,
+    const ActionCombatHit3DFactory& makeHits,
+    std::span<const CombatBatchTarget> combatTargets,
+    const RelationTable& relations, HitLedger& ledger,
+    ActionCombatBatch3DResult& out, const RuleRegistry* rules = nullptr) {
+    return stepAndSettleFixedAction3D(timeline, tick, timeline.checkpoint(),
+        makeHits, combatTargets, relations, ledger, out, rules);
 }
 
 } // namespace ayt::combat
