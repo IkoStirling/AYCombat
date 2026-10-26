@@ -66,6 +66,8 @@ For one World-owned, durable 2D tick, link `AYCombat::Host` and use `Action2DWor
 这两个联合结算入口还可选接收 `ActionMovingBlocker2D`：游戏提供移动门或掩体在同 tick 的实际路径，动作候选先裁去障碍后的命中，再与数值批次一同提交。旧的仅静态障碍调用方式继续可用；非法移动路径会在提交前拒绝。
 `AYCombat/Action3DBatch.h` 的可选 `stepAndSettleFixedAction3D` 把一个 `FixedActionTimeline` tick 与最多 64 个低层 Combat 命中放在同一发布边界。游戏在活动命中窗内进行只读物理查询，并把每个请求的 tick、Ability execution 和 segment 分别对齐当前帧、执行实例与窗口 ID。映射或结算失败会恢复时间线 checkpoint，不会推进生命、数值、命中账本或输出。需要同时链接 `AYAbility::Core` 和 `AYCombat::Stats`；根运动、Entity 通知与持久化仍由游戏编排。
 
+需要跨重启防止重复命中时，可链接 `AYCombat::Host` 使用 `AYCombat/Action3DWorldCommit.h` 的 `commitActionWorld3D`。它在私有时间线和 Combat 值状态上结算，将指纹收据及 Combat 结果通知加入 WorldStateLedger/DurableOutbox 候选，调用游戏的失败原子同槽保存回调后才发布。版本 1、有界 JSON 节包含时间线 checkpoint、目标 Stats/生命、HitLedger、收据及 outbox；游戏恢复时提供原动作定义和 Stats schema，并把物理姿态、Entity 身份和其他 World 节放在同一槽。外部通知在保存后用 outbox 重试，接收方按 key 去重。预览后仍须传入预览前 checkpoint；游戏负责只读命中查询、实际根运动与代次 preflight。
+
 2D/3D 批次都可传入 `ActionCombatPreflight`，在命中查询和映射完成后、数值
 发布前复核本 tick 捕获的 World/Entity/组件代次；失败保持动作、数值和命中
 账本不变。World 适配器的 `validateCombatantBinding` 对捕获的

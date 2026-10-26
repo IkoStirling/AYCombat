@@ -130,13 +130,15 @@ function(ay_combat_add_host_integration)
         add_library(AYCombatHostIntegration STATIC
             "${AY_COMBAT_SOURCE_DIR}/src/HostIntegration.cpp"
             "${AY_COMBAT_SOURCE_DIR}/src/Action2DWorldCommit.cpp"
-            "${AY_COMBAT_SOURCE_DIR}/src/Action2DWorldSnapshot.cpp")
+            "${AY_COMBAT_SOURCE_DIR}/src/Action2DWorldSnapshot.cpp"
+            "${AY_COMBAT_SOURCE_DIR}/src/Action3DWorldCommit.cpp"
+            "${AY_COMBAT_SOURCE_DIR}/src/Action3DWorldSnapshot.cpp")
         add_library(AYCombat::Host ALIAS AYCombatHostIntegration)
         target_link_libraries(AYCombatHostIntegration PUBLIC AYCombatSceneIntegration
-            AYApplication AYApplicationSaveGame AY2D AYStatsAssets)
+            AYApplication AYApplicationSaveGame AY2D AYStatsAssets AYAbilityCore)
         target_link_libraries(AYCombatHostIntegration PRIVATE nlohmann_json::nlohmann_json)
         if(TARGET AYCombat_EntityTests)
-            add_executable(AYCombat_HostTests "${AY_COMBAT_SOURCE_DIR}/unittest/main.cpp" "${AY_COMBAT_SOURCE_DIR}/unittest/Test_Host.cpp" "${AY_COMBAT_SOURCE_DIR}/unittest/Test_Action2DWorldCommit.cpp")
+            add_executable(AYCombat_HostTests "${AY_COMBAT_SOURCE_DIR}/unittest/main.cpp" "${AY_COMBAT_SOURCE_DIR}/unittest/Test_Host.cpp" "${AY_COMBAT_SOURCE_DIR}/unittest/Test_Action2DWorldCommit.cpp" "${AY_COMBAT_SOURCE_DIR}/unittest/Test_Action3DWorldCommit.cpp")
             target_link_libraries(AYCombat_HostTests PRIVATE AYCombatHostIntegration AYTest)
             if(MSVC)
                 target_compile_options(AYCombat_HostTests PRIVATE /utf-8 /Zc:preprocessor /Zc:__cplusplus)

@@ -335,6 +335,21 @@ blocked hits never enter the Combat batch, and invalid paths leave every live
 action and numerical state unchanged. Static-only overloads retain the old
 call shape.
 
+The optional `Action3DWorldCommit.h` Host adapter builds on the lower-level
+3D batch without mutating its live timeline. It copies the authored timeline
+and caller-owned targets, settles one previewed tick, snapshots the completed
+HitLedger and stages a fingerprinted World receipt plus durable outcome
+notices. The game saves this candidate and its own physics pose/Entity/World
+sections in one failure-atomic slot. Only successful saves publish the value
+owners; an exact receipt replay skips the query and save, while a changed
+fingerprint conflicts. The version-1 4 MiB JSON section restores pointer-free
+timeline checkpoint, Stats, life phase/sequence, HitLedger high-water, World
+receipts and outbox. Decode validates shape and schema without changing the
+output; restoring the checkpoint against unchanged authored definitions is the
+game's publication step. The preflight must recheck Entity generations under
+exclusive World ownership. Physical motion and external delivery remain game
+owned; the receiver deduplicates each durable notice key.
+
 The optional `Action3DBatch.h` adapter stages one `FixedActionTimeline`
 step with up to 64 Combat hits. It checkpoints the pointer-free clock rather
 than copying its authored definition table, validates every mapped hit's tick,
