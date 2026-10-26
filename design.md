@@ -305,6 +305,14 @@ blocked hits never enter the Combat batch, and invalid paths leave every live
 action and numerical state unchanged. Static-only overloads retain the old
 call shape.
 
+The optional `Action3DBatch.h` adapter stages one `FixedActionTimeline`
+step with up to 64 Combat hits. It checkpoints the pointer-free clock rather
+than copying its authored definition table, validates every mapped hit's tick,
+Ability execution and authored segment, and restores that checkpoint if the
+read-only query or Combat batch fails. Combat publishes its value owners only
+after all hits succeed. The host remains responsible for geometry sampling,
+root motion, Entity side effects and save publication.
+
 ## 3D area candidate boundary (2026-10-24)
 
 Physics3DArea is an optional Entity/Jolt adapter. It samples the source
