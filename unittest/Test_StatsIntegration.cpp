@@ -160,6 +160,18 @@ TEST_CASE(action_path_and_combat_batch_publish_together_or_not_at_all) {
         && output.action.clip == "unchanged");
 
     invalidSecond = false;
+    const ActionCombatPreflight staleWorld = [](std::span<const CombatBatchHit>)
+        -> Result<void> {
+        return std::unexpected(Diagnostic{Error::Stale,
+            "target generation changed", {}});
+    };
+    CHECK_TRUE(stepAndSettleActionPath2D(action, 0, {"strike", true},
+        path, actionTargets, {}, makeHit, combatTargets, table, book,
+        output, nullptr, staleWorld).error().code == Error::Stale);
+    CHECK_TRUE(action.state().nextTick == 0
+        && first.read(ayt::stats::statId("health"))->current == 100
+        && second.read(ayt::stats::statId("health"))->current == 100
+        && book.retainedRequests() == 0);
     CHECK_TRUE(stepAndSettleActionPath2D(action, 0, {"strike", true},
         path, actionTargets, {}, makeHit, combatTargets, table, book,
         output).has_value());

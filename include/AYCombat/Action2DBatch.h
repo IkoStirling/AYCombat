@@ -41,7 +41,8 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
     const ActionCombatHit2DFactory& makeHit,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
-    ActionCombatBatch2DResult& out, const RuleRegistry* rules = nullptr) {
+    ActionCombatBatch2DResult& out, const RuleRegistry* rules = nullptr,
+    const ActionCombatPreflight& preflight = {}) {
     static_assert(std::is_nothrow_move_assignable_v<ayt::ay2d::ActionRuntime2D>);
     static_assert(std::is_nothrow_move_assignable_v<ayt::ay2d::ActionStep2D>);
     try {
@@ -69,9 +70,17 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
                         "2D action Combat hit uses another tick", {}});
                 hits.push_back(std::move(*bound));
             }
+            if (preflight) {
+                auto checked = preflight(hits);
+                if (!checked) return std::unexpected(checked.error());
+            }
             if (auto settled = settleBatch(hits, combatTargets, relations,
                                            ledger, combat, rules); !settled)
                 return std::unexpected(settled.error());
+        }
+        if (action.hits.empty() && preflight) {
+            auto checked = preflight(hits);
+            if (!checked) return std::unexpected(checked.error());
         }
         runtime = std::move(candidate);
         out.action = std::move(action);
@@ -96,10 +105,11 @@ using ActionCombatHit2DFactory = std::function<Result<CombatBatchHit>(
     const ActionCombatHit2DFactory& makeHit,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
-    ActionCombatBatch2DResult& out, const RuleRegistry* rules = nullptr) {
+    ActionCombatBatch2DResult& out, const RuleRegistry* rules = nullptr,
+    const ActionCombatPreflight& preflight = {}) {
     return stepAndSettleActionPath2D(runtime, tick, input, ownerPath,
         actionTargets, blockers, {}, makeHit, combatTargets, relations,
-        ledger, out, rules);
+        ledger, out, rules, preflight);
 }
 
 struct ActionCombatGroup2DResult {
@@ -125,7 +135,8 @@ using ActionCombatGroupHit2DFactory = std::function<Result<CombatBatchHit>(
     const ActionCombatGroupHit2DFactory& makeHit,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
-    ActionCombatGroup2DResult& out, const RuleRegistry* rules = nullptr) {
+    ActionCombatGroup2DResult& out, const RuleRegistry* rules = nullptr,
+    const ActionCombatPreflight& preflight = {}) {
     static_assert(std::is_nothrow_move_assignable_v<ayt::ay2d::ActionRuntime2D>);
     if (actors.empty() || actors.size() > 64)
         return std::unexpected(Diagnostic{Error::Limit,
@@ -176,9 +187,17 @@ using ActionCombatGroupHit2DFactory = std::function<Result<CombatBatchHit>(
                     hits.push_back(std::move(*bound));
                 }
             }
+            if (preflight) {
+                auto checked = preflight(hits);
+                if (!checked) return std::unexpected(checked.error());
+            }
             if (auto settled = settleBatch(hits, combatTargets, relations,
                                            ledger, combat, rules); !settled)
                 return std::unexpected(settled.error());
+        }
+        if (!hitCount && preflight) {
+            auto checked = preflight(hits);
+            if (!checked) return std::unexpected(checked.error());
         }
         for (std::size_t i = 0; i < actors.size(); ++i)
             *actors[i].runtime = std::move(candidates[i]);
@@ -202,9 +221,10 @@ using ActionCombatGroupHit2DFactory = std::function<Result<CombatBatchHit>(
     const ActionCombatGroupHit2DFactory& makeHit,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
-    ActionCombatGroup2DResult& out, const RuleRegistry* rules = nullptr) {
+    ActionCombatGroup2DResult& out, const RuleRegistry* rules = nullptr,
+    const ActionCombatPreflight& preflight = {}) {
     return stepAndSettleActionGroup2D(tick, actors, canHit, blockers, {},
-        makeHit, combatTargets, relations, ledger, out, rules);
+        makeHit, combatTargets, relations, ledger, out, rules, preflight);
 }
 
 } // namespace ayt::combat

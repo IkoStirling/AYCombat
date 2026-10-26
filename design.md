@@ -35,6 +35,14 @@ receipts, life phases and output vector remain unchanged. Relation/rule
 snapshots, action-runtime state, Entity callbacks, World/Inventory changes and
 disk persistence remain with the caller.
 
+Action2DBatch and Action3DBatch accept one read-only `ActionCombatPreflight`
+after game-owned hit queries and immediately before numerical publication.
+It can call `validateCombatantBinding` for captured World/Entity/Stats/
+Combat generations. A stale generation rejects the complete tick before any
+StatSet, life or ledger change; the 3D timeline restores its checkpoint.
+This does not serialize Entity notification or persistence, and the host
+must keep the fixed simulation boundary exclusive while the batch runs.
+
 Ordered rules, block/zero/actual result classification and explicit life policy are delivered. AYCombat::Entity adds a World-owned gameplay facade, default/explicit Stats recipes, generic Stats attribute changes, N3 single-target interaction permission, N4 owned effect contributions, N5 headless area membership and automatic internal life propagation. Optional Scene/Host targets install the complete dependencies for new Worlds. Physics candidate providers, shields, attack/skill scheduling, parry/redirection, cross-object reactions, runtime save/load, scale benchmarks and Ability/Combo remain planned. Public scope is partial.
 
 ## Identity and ownership

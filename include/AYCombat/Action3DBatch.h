@@ -36,7 +36,8 @@ using ActionCombatHit3DFactory = std::function<Result<std::vector<CombatBatchHit
     const ActionCombatHit3DFactory& makeHits,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
-    ActionCombatBatch3DResult& out, const RuleRegistry* rules = nullptr) {
+    ActionCombatBatch3DResult& out, const RuleRegistry* rules = nullptr,
+    const ActionCombatPreflight& preflight = {}) {
     static_assert(std::is_nothrow_move_assignable_v<ayt::ability::FixedActionFrame>);
     const auto before = timeline.checkpoint();
     if (before != expected)
@@ -84,12 +85,26 @@ using ActionCombatHit3DFactory = std::function<Result<std::vector<CombatBatchHit
                         "3D Combat hit does not match action tick, execution or window", {}});
                 }
             }
+            if (preflight) {
+                auto checked = preflight(hits);
+                if (!checked) {
+                    (void)rollback();
+                    return std::unexpected(checked.error());
+                }
+            }
             if (!hits.empty()) {
                 if (auto settled = settleBatch(hits, combatTargets, relations,
                                                ledger, combat, rules); !settled) {
                     (void)rollback();
                     return std::unexpected(settled.error());
                 }
+            }
+        }
+        if (frame.hitWindows.empty() && preflight) {
+            auto checked = preflight(hits);
+            if (!checked) {
+                (void)rollback();
+                return std::unexpected(checked.error());
             }
         }
         out.frame = std::move(frame);
@@ -112,9 +127,10 @@ using ActionCombatHit3DFactory = std::function<Result<std::vector<CombatBatchHit
     const ActionCombatHit3DFactory& makeHits,
     std::span<const CombatBatchTarget> combatTargets,
     const RelationTable& relations, HitLedger& ledger,
-    ActionCombatBatch3DResult& out, const RuleRegistry* rules = nullptr) {
+    ActionCombatBatch3DResult& out, const RuleRegistry* rules = nullptr,
+    const ActionCombatPreflight& preflight = {}) {
     return stepAndSettleFixedAction3D(timeline, tick, timeline.checkpoint(),
-        makeHits, combatTargets, relations, ledger, out, rules);
+        makeHits, combatTargets, relations, ledger, out, rules, preflight);
 }
 
 } // namespace ayt::combat

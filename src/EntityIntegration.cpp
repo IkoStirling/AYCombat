@@ -842,6 +842,12 @@ Result<EntityBinding> bindCombatant(ayt::entity::World& world, ayt::entity::Enti
     EntityBinding binding{{system->worldToken(), handle.id, std::uint64_t(handle.version) + 1}, stats->generation(), combat->generation()};
     auto current = resolve(world, binding); if (!current) return std::unexpected(current.error()); return binding;
 }
+Result<void> validateCombatantBinding(ayt::entity::World& world,
+                                     const EntityBinding& binding) {
+    auto current = resolve(world, binding);
+    if (!current) return std::unexpected(current.error());
+    return {};
+}
 Result<void> registerCombatComponent(ayt::entity::ComponentRegistry& registry) {
     auto result = ayt::entity::registerSceneComponent<CombatComponent>(registry, "CombatComponent", "Combat", "Gameplay");
     if (!result) return std::unexpected(Diagnostic{Error::Invalid, result.message(), {}}); return {};

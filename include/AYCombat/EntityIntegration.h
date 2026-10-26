@@ -53,6 +53,10 @@ struct EntityBinding {
     CombatantRef ref;
     std::uint64_t statsGeneration = 0, combatGeneration = 0;
 };
+/// Read-only validation of a captured World/Entity/Stats/Combat generation.
+/// Use at the serialized action-batch preflight boundary after hit queries.
+[[nodiscard]] Result<void> validateCombatantBinding(
+    ayt::entity::World& world, const EntityBinding& binding);
 /// A headless provider returns current in-range candidates and their selection fact.
 struct AreaCandidate { ayt::entity::EntityHandle target; bool selected=false; };
 using AreaCandidateProvider = std::function<Result<std::vector<AreaCandidate>>() >;

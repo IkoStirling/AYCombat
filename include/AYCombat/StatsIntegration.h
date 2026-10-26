@@ -2,6 +2,7 @@
 #include <AYCombat/HitLedger.h>
 #include <AYCombat/Rules.h>
 #include <AYStats/Calculation.h>
+#include <functional>
 
 namespace ayt::combat {
 
@@ -113,6 +114,12 @@ struct CombatBatchHit {
     const ayt::stats::CalculationPlan* plan = nullptr;
     std::span<const ayt::stats::Value> inputs;
 };
+
+/// Host rechecks captured World/Entity/component generations after hit query
+/// and immediately before any numerical publication. A failure rejects the
+/// complete action tick. The callback must be read-only and non-reentrant.
+using ActionCombatPreflight = std::function<Result<void>(
+    std::span<const CombatBatchHit>)>;
 
 struct CombatBatchTarget {
     CombatantRef ref;

@@ -102,6 +102,16 @@ TEST_CASE(deleted_entity_rejects_late_work_and_retained_outcome_owns_source) {
     CHECK_TRUE(f.system().submit(f.binding,r,Fixture::plan(),std::array<ayt::stats::Value,1>{30}).error().code == Error::Stale);
     auto events = f.system().takeOutcomes(); CHECK_TRUE(events.size() == 1 && events[0].source.instigator.has_value());
 }
+TEST_CASE(read_only_binding_preflight_rejects_deleted_or_replaced_target) {
+    Fixture f;
+    CHECK_TRUE(validateCombatantBinding(f.world, f.binding).has_value());
+    const auto stale = f.binding;
+    f.target->removeComponent<CombatComponent>();
+    f.combat = f.target->addComponent<CombatComponent>();
+    CHECK_TRUE(validateCombatantBinding(f.world, stale).error().code == Error::Stale);
+    f.world.destroyEntity(f.target);
+    CHECK_TRUE(validateCombatantBinding(f.world, stale).error().code == Error::Stale);
+}
 TEST_CASE(component_replacement_and_stats_reconfiguration_invalidate_binding) {
     Fixture f; auto r = f.request(); f.target->removeComponent<CombatComponent>();
     f.combat = f.target->addComponent<CombatComponent>(); f.combat->team = 20;
