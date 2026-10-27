@@ -273,6 +273,87 @@ Result<CombatOutcome> settlePartArmorHit(const SettlementRequest& request,
         plan->changes(), options);
 }
 
+Result<void> settlePartArmorBatch(std::span<const PartArmorBatchHit> hits,
+    std::span<const CombatBatchTarget> targets,
+    const RelationTable& relations, HitLedger& ledger,
+    std::vector<CombatOutcome>& out, const RuleRegistry* rules) {
+    static_assert(std::is_nothrow_move_assignable_v<ayt::stats::StatSet>);
+    static_assert(std::is_nothrow_copy_assignable_v<LifeTracker>);
+    if (hits.empty() || targets.empty() || hits.size() > 64
+        || targets.size() > 64)
+        return fail(Error::Limit, "part/armor batch needs 1..64 hits and targets");
+    const auto domain = hits.front().request.hit.attack.domain;
+    const auto tick = hits.front().request.hit.tick;
+    if (!domain) return fail(Error::Invalid, "part/armor batch domain missing");
+    for (const auto& hit : hits)
+        if (hit.request.hit.tick != tick
+            || hit.request.hit.attack.domain != domain)
+            return fail(Error::Invalid,
+                "part/armor batch hits need one tick and domain");
+    struct Shadow {
+        CombatantRef ref;
+        ayt::stats::StatSet* live;
+        ayt::stats::StatSet state;
+        LifeTracker* liveLife;
+        std::optional<LifeTracker> life;
+        std::uint64_t initialVersion;
+    };
+    try {
+        std::vector<Shadow> staged;
+        staged.reserve(targets.size());
+        for (const auto& target : targets) {
+            if (!target.ref.valid() || target.ref.domain != domain
+                || !target.state)
+                return fail(Error::Invalid, "invalid part/armor batch target");
+            for (const auto& prior : staged)
+                if (prior.ref == target.ref || prior.live == target.state
+                    || (target.life && prior.liveLife == target.life))
+                    return fail(Error::Duplicate,
+                        "part/armor batch target identity or state duplicated");
+            staged.push_back({target.ref, target.state, *target.state,
+                target.life, target.life
+                    ? std::optional<LifeTracker>(*target.life) : std::nullopt,
+                target.state->version()});
+        }
+        auto stagedLedger = ledger.stagedCopy();
+        std::vector<CombatOutcome> outcomes;
+        outcomes.reserve(hits.size());
+        for (const auto& hit : hits) {
+            const auto found = std::find_if(staged.begin(), staged.end(),
+                [&](const Shadow& target) {
+                    return target.ref == hit.request.hit.target;
+                });
+            if (found == staged.end())
+                return fail(Error::Missing,
+                    "part/armor batch target is not bound");
+            if (hit.request.expectedVersion != found->initialVersion)
+                return fail(Error::Stale,
+                    "part/armor batch target version changed before staging");
+            auto request = hit.request;
+            request.expectedVersion = found->state.version();
+            auto plan = planPartArmorHit(request, found->state,
+                hit.route, hit.incoming);
+            if (!plan) return std::unexpected(plan.error());
+            auto settled = settleResources(request, relations, stagedLedger,
+                found->state, plan->changes(),
+                {rules, found->life ? &*found->life : nullptr});
+            if (!settled) return std::unexpected(settled.error());
+            outcomes.push_back(std::move(*settled));
+        }
+        for (auto& target : staged) {
+            if (target.state.version() != target.initialVersion)
+                *target.live = std::move(target.state);
+            if (target.liveLife) *target.liveLife = *target.life;
+        }
+        ledger = std::move(stagedLedger);
+        out.swap(outcomes);
+        return {};
+    } catch (const std::bad_alloc&) {
+        return fail(Error::Limit,
+            "part/armor batch candidate allocation failed");
+    }
+}
+
 Result<void> settleBatch(std::span<const CombatBatchHit> hits,
     std::span<const CombatBatchTarget> targets,
     const RelationTable& relations, HitLedger& ledger,

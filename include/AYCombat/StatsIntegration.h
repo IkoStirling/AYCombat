@@ -161,6 +161,12 @@ Result<CombatOutcome> settlePartArmorHit(const SettlementRequest& request,
     ayt::stats::StatSet& targetState, const PartArmorRoute& route,
     ayt::stats::Value incoming, SettlementOptions options = {});
 
+struct PartArmorBatchHit {
+    SettlementRequest request;
+    PartArmorRoute route;
+    ayt::stats::Value incoming = 0;
+};
+
 /// One ordered hit in a 1..64-hit same-domain fixed-tick batch. Inputs and plan are
 /// borrowed for the call. Every request carries the target's live version
 /// at batch start; later hits on that target use staged versions internally.
@@ -181,6 +187,17 @@ struct CombatBatchTarget {
     ayt::stats::StatSet* state = nullptr;
     LifeTracker* life = nullptr;
 };
+
+/// Commit 1..64 ordered part/armor hits across 1..64 targets as one numerical
+/// and hit-ledger publication. Each hit plans against its target's staged
+/// armor after all earlier hits in caller order. Requests carry the version
+/// observed at batch start; a later failure leaves every live owner and the
+/// output vector unchanged. The game maps ballistic surfaces to parts and
+/// incoming amounts and still owns World/Inventory durability.
+Result<void> settlePartArmorBatch(std::span<const PartArmorBatchHit> hits,
+    std::span<const CombatBatchTarget> targets,
+    const RelationTable& relations, HitLedger& ledger,
+    std::vector<CombatOutcome>& out, const RuleRegistry* rules = nullptr);
 
 /// Stage hit receipts, all target StatSets and optional life trackers, then
 /// publish them together without callbacks or allocations. A failed hit

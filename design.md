@@ -13,6 +13,15 @@ without a partial trace. The output is only a candidate path: thickness,
 projectile volume, armor, damage and authoritative hit settlement remain
 separate. Every segment consumes the synchronous Physics query budget.
 
+`settlePartArmorBatch` is the numerical continuation for game-mapped surface
+steps. It copies target StatSets, life trackers and the HitLedger; every hit
+replans against its target's staged armor and uses the batch-start live version
+as its caller precondition. Only after the complete ordered group succeeds
+does it publish all targets, receipts and outcomes. It does not persist the
+World, item durability or action clock. Games must keep the fixed Sim boundary
+exclusive and save externally affected owners as one complete slot when
+restart atomicity is required.
+
 2026-09-30. Execution baseline and delivery evidence: [engine implementation plan](../../AYDocs/AYCOMBAT-IMPLEMENTATION-PLAN.md), sections 16–17.
 
 ## Delivered scope

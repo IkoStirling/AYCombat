@@ -31,6 +31,11 @@ atomic Stats commit. The game maps the collider to a part and supplies a
 0..10000 absorption rate; armor absorbs at most its current pool, with the
 remainder applied to health. The helper does not infer penetration geometry,
 coverage probability, equipment durability or medical rules.
+`settlePartArmorBatch` takes up to 64 ordered part/armor hits against up to 64
+targets. Each hit plans against the staged armor left by earlier hits, then
+publishes every Stats owner and hit receipt together. A later invalid target
+or route leaves all live armor, health and receipts untouched. Games can map
+accepted 3D ballistic surface steps to these hits using their own damage rule.
 `settleBatch` stages 1..64 ordered hits against up to 64 caller-owned
 `StatSet` targets, optional life trackers and a copied HitLedger. It publishes
 all numerical states and receipts only after every hit succeeds. Repeated

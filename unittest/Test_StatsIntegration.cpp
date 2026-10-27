@@ -394,6 +394,57 @@ TEST_CASE(part_armor_route_absorbs_then_exposes_health_without_replay) {
     CHECK_TRUE(state.read(route.health)->current == 70);
 }
 
+TEST_CASE(part_armor_batch_replans_staged_armor_and_commits_all_targets) {
+    auto first = armoredStats(), second = armoredStats();
+    auto book = ledger({HitScope::Segment});
+    auto a = request(1, first);
+    a.hit.part = 7;
+    auto b = request(2, first);
+    b.hit.part = 7;
+    b.hit.segment = 1;
+    auto c = request(3, second);
+    c.hit.part = 7;
+    c.hit.target = actor(3);
+    c.target.ref = actor(3);
+    const PartArmorRoute route{7, ayt::stats::statId("health"),
+        ayt::stats::statId("armor"), 7500};
+    std::array<PartArmorBatchHit, 3> hits{{
+        {a, route, 40}, {b, route, 80}, {c, route, 20}}};
+    hits[2].route.health = ayt::stats::statId("missing");
+    const std::array<CombatBatchTarget, 2> targets{{
+        {actor(2), &first, nullptr}, {actor(3), &second, nullptr}}};
+    std::vector<CombatOutcome> outcomes(1);
+    const auto beforeFirst = first.version(), beforeSecond = second.version();
+    const auto failed = settlePartArmorBatch(hits, targets, relations(),
+        book, outcomes);
+    CHECK_FALSE(failed.has_value());
+    CHECK_TRUE(failed.error().code == Error::Invalid);
+    CHECK_TRUE(first.version() == beforeFirst
+        && second.version() == beforeSecond
+        && first.read(route.armor)->current == 50
+        && second.read(route.health)->current == 100
+        && book.retainedRequests() == 0 && outcomes.size() == 1);
+    hits[2].route = route;
+    CHECK_TRUE(settlePartArmorBatch(hits, targets, relations(), book, outcomes)
+        .has_value());
+    CHECK_TRUE(first.read(route.armor)->current == 0
+        && first.read(route.health)->current == 30
+        && second.read(route.armor)->current == 35
+        && second.read(route.health)->current == 95
+        && outcomes.size() == 3
+        && outcomes[0].calculated == 10
+        && outcomes[1].calculated == 60
+        && outcomes[2].calculated == 5
+        && book.retainedRequests() == 3);
+    hits[0].request.expectedVersion = first.version();
+    hits[1].request.expectedVersion = first.version();
+    hits[2].request.expectedVersion = second.version();
+    CHECK_TRUE(settlePartArmorBatch(hits, targets, relations(), book, outcomes)
+        .error().code == Error::Duplicate);
+    CHECK_TRUE(first.read(route.health)->current == 30
+        && second.read(route.health)->current == 95);
+}
+
 TEST_CASE(part_armor_route_rejects_stale_and_invalid_without_reservation) {
     auto state = armoredStats(); auto book = ledger(); auto r = request(1, state);
     r.hit.part = 2;
