@@ -2,6 +2,15 @@
 
 Independent Git repository on `main`, registered as an AliyatEngine submodule. Provides relationships, target permission, provenance, stable candidate selection, hit reservation/replay protection, ordered rule predicates, real single-resource Stats settlement, explicit life policy and an optional World/Entity adapter.
 
+`AYCombat::Ballistic3D` provides `traceBallisticSurfaces3D` over the current
+Jolt 3D multi-hit query. The game resolves each exact collider to an authored
+surface cost and optional grazing-angle ricochet rule. The trace returns
+ordered penetration, stop and ricochet steps with remaining energy; a bounce
+starts a new bounded query and excludes the surface just hit. It does not
+infer geometry thickness or apply damage. The game maps accepted steps to
+Combat/Stats at its serialized Sim boundary. See
+`AYCombat_Ballistic3DTests`.
+
 `AYCombat/InitiativeClock.h` provides an optional game-owned fixed-tick action
 order for turn-style and ATB-style combat. The host advances logical ticks,
 starts one ready actor, runs its own Ability/Combat action, then finishes that

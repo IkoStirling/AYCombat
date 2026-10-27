@@ -1,5 +1,18 @@
 # AYCombat v0.1 contracts
 
+## 3D ballistic surface trace (2026-10-27)
+
+The optional `AYCombatBallistic3D` target consumes a finite ordered
+`IPhysicsQuery::raycastAll3DSync` result. Per-collider rules are supplied by
+the game. Each front-facing grazing hit may reflect the direction and retain
+an authored fraction of energy; otherwise each surface charges an authored
+fixed energy cost. A ricochet issues a new query from a small offset, ignoring
+the last body, with at most four ricochets and 64 total steps. Invalid geometry,
+rules, failed/truncated queries and missing material mappings return an error
+without a partial trace. The output is only a candidate path: thickness,
+projectile volume, armor, damage and authoritative hit settlement remain
+separate. Every segment consumes the synchronous Physics query budget.
+
 2026-09-30. Execution baseline and delivery evidence: [engine implementation plan](../../AYDocs/AYCOMBAT-IMPLEMENTATION-PLAN.md), sections 16–17.
 
 ## Delivered scope
